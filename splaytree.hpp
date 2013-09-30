@@ -17,15 +17,31 @@ template <typename Value>
 struct splaytree_iterator
         : std::iterator<std::bidirectional_iterator_tag, Value> {
     // TODO
+    bool operator!= () const;
+
+    // TODO
     reference operator* () const;
 
+    // TODO
+    pointer operator-> () const;
+
     /* TODO Prefix */
-    splaytree_iterator<value_type>& operator++ ();
+    splaytree_iterator& operator++ ();
 
     /* Postfix */
-    splaytree_iterator<value_type> operator++ (int) {
+    splaytree_iterator operator++ (int) {
         auto ret = *this;
         ++*this;
+        return ret;
+    }
+
+    /* TODO Prefix */
+    splaytree_iterator& operator-- ();
+
+    /* Postfix */
+    splaytree_iterator operator-- (int) {
+        auto ret = *this;
+        --*this;
         return ret;
     }
 };
@@ -79,11 +95,9 @@ public:
         insert(first, last);
     }
 
-    // TODO
     splaytree (std::initializer_list<value_type> ilist,
-               const value_compare& comp = value_compare());
-
-    /* TODO initializer_list assignment operator */
+               const value_compare& comp = value_compare())
+            : splaytree(ilist.begin(), iliest.end(), comp) { }
 
     ~splaytree () {
         delete m_root;
@@ -124,9 +138,9 @@ public:
     bool operator>= (const splaytree<value_type>& other) const;
 
     /* Unnecessary--I only provided this because the STL requires it. */
-    void swap (splaytree& lhs, splaytree& rhs) {
+    void swap (splaytree& other) {
         using std::swap;
-        swap(lhs, rhs);
+        swap(*this, other);
     }
 
     friend void swap (splaytree& lhs, splaytree& rhs) {
@@ -140,13 +154,17 @@ public:
         return *this;
     }
     
+    splaytree& operator= (std::initializer_list<value_type> ilist) {
+        return *this = splaytree(ilist, m_comp);
+    }
+
     size_type size () const {
         return m_size;
     }
 
     size_type max_size () const {
         // Hell if I know.
-        return static_cast<size_type>(-1);
+        return std::numeric_limits<size_type>::max();
     }
 
     bool empty () const {
