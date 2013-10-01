@@ -6,28 +6,48 @@
 
 #include <iostream>
 
+#include <cassert>
+#include <cstddef>
+
+#include <functional>
 #include <initializer_list>
 #include <iterator>
-#include <functional>
+#include <limits>
 
 namespace detail {
 
 template <typename Value>
 class node {
 public:
-    node (const Value& value, node* left, node* right)
-            : m_value(value)
-            , m_left(left)
-            , m_right(right) { }
+    node (const Value& value)
+            : m_value(value) { }
 
-    node (Value&& value, node* left, node* right)
-            : m_value(std::forward<Value>(value))
-            , m_left(left)
-            , m_right(right) { }
+    node (Value&& value)
+            : m_value(std::forward<Value>(value)) { }
 
     ~node () {
         delete m_left;
         delete m_right;
+    }
+
+    void attach_left (node* left) {
+        assert(!m_left);
+        m_left = left;
+
+        if (m_left) {
+            assert(!m_left->m_parent);
+            m_left->m_parent = this;
+        }
+    }
+
+    void attach_right (node* right) {
+        assert(!m_right);
+        m_right = right;
+
+        if (m_right) {
+            assert(!m_right->m_parent);
+            m_right->m_parent = this;
+        }
     }
 
     Value& value () {
@@ -66,6 +86,7 @@ public:
     }
 
     static node* join (node* lhs, node* rhs) {
+        printf("JOIN!!!\n");
         if (!lhs) {
             return rhs;
         }
@@ -79,10 +100,8 @@ public:
 
         /* Find the largest element of the left-hand tree. */
         auto root = search(lhs, [] (const Value&) { return false; });
-        assert(!root->m_right);
+        root->attach_right(rhs);
 
-        root->m_right = rhs;
-        rhs->m_parent = root;
         return root;
     }
 
@@ -104,14 +123,18 @@ public:
             if (comp(value, root->m_value)) {
                 lhs = root->m_left;
                 rhs = root;
-                lhs->m_parent = nullptr;
+                if (lhs) {
+                    lhs->m_parent = nullptr;
+                }
                 rhs->m_left = nullptr;
             }
             else {
                 lhs = root;
                 rhs = root->m_right;
                 lhs->m_right = nullptr;
-                rhs->m_parent = nullptr;
+                if (rhs) {
+                    rhs->m_parent = nullptr;
+                }
             }
         }
 
@@ -120,23 +143,32 @@ public:
 
     static node* increment (node* s) {
         if (!s) {
+            printf("increment: end\n");
             return nullptr;
         }
 
         if (s->m_right) {
+            printf("increment: right\n");
             /* Find the smallest element in the right child. */
             return search_no_splay(s->m_right, [] (const Value&) { return true; });
         }
 
-        if (s->is_left_child()) {
-            return s->m_parent;
-        }
-
         while (s->m_parent && !s->is_left_child()) {
+            printf("increment: up to the left\n");
             s = s->m_parent;
         }
 
+        printf("increment: up to the right\n");
         return s->m_parent;
+    }
+
+    static bool is_valid (node* s) {
+        if (!s) {
+            return true;
+        }
+
+        // TODO
+        return true;
     }
 
 private:
@@ -192,16 +224,20 @@ private:
 
     Value m_value;
     
-    node* m_parent;
-    node* m_left;
-    node* m_right;
+    node* m_parent = nullptr;
+    node* m_left = nullptr;
+    node* m_right = nullptr;
 };
 
 template <typename Value>
 class iterator
         : public std::iterator<std::forward_iterator_tag, Value> {
 public:
+    using base_type = std::iterator<std::forward_iterator_tag, Value>;
+
     using node_type = node<Value>;
+    using reference = typename base_type::reference;
+    using pointer = typename base_type::pointer;
 
     iterator (node_type* node = nullptr)
             : m_node(node) { }
@@ -286,7 +322,7 @@ public:
 
     splaytree (std::initializer_list<value_type> ilist,
                const value_compare& comp = value_compare())
-            : splaytree(ilist.begin(), iliest.end(), comp) { }
+            : splaytree(ilist.begin(), ilist.end(), comp) { }
 
     ~splaytree () {
         delete m_root;
@@ -399,11 +435,14 @@ public:
 
     std::pair<iterator, bool> insert (const value_type& value) {
         /* printf */
-        std::cout << "inserting " << value;
+        std::cout << "inserting " << value << '\n';
 
         node_type* lhs;
         node_type* rhs;
         std::tie(lhs, rhs) = node_type::split(m_root, value, m_comp);
+
+        printf("root<%d> lhs<%d> rhs<%d>\n", m_root ? m_root->value() : -666, lhs ? lhs->value() : -666, rhs ? rhs->value() : -666);
+
 
         bool success = false;
         /* We already know that the left-hand side has values less than or
@@ -411,7 +450,9 @@ public:
          * comparison will tell us if the root of the left-hand side is equal
          * to our search key. */
         if (!lhs || m_comp(lhs->value(), value)) {
-            m_root = new node_type (value, lhs, rhs);
+            m_root = new node_type (value);
+            m_root->attach_left(lhs);
+            m_root->attach_right(rhs);
             success = true;
             m_size++;
         }
@@ -420,6 +461,7 @@ public:
             m_root = node_type::join(lhs, rhs);
         }
 
+        assert(node_type::is_valid(m_root));
         return std::make_pair(iterator(m_root), success);
     }
 

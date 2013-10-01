@@ -2,15 +2,19 @@
 
 #include <cstdio>
 
-int main () {
-    splaytree<int> st;
+#include <algorithm>
+#include <vector>
 
-    st.insert(3);
-    st.insert(4);
-    st.insert(32);
-    st.insert(-4);
-    st.insert(56);
-    st.insert(11);
+int main () {
+    std::vector<int> v;
+    for (int i = -29; i < 29; ++i) {
+        v.push_back(i);
+    }
+    std::random_shuffle(v.begin(), v.end());
+
+    splaytree<int> st { v.begin(), v.end() };
+
+    assert(!st.insert(0).second);
 
     for (auto i : st) {
         printf("%d\n", i);
