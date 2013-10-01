@@ -4,6 +4,8 @@
 #ifndef SPLAYTREE_HPP
 #define SPLAYTREE_HPP
 
+#include <iostream>
+
 #include <initializer_list>
 #include <iterator>
 #include <functional>
@@ -11,47 +13,235 @@
 namespace detail {
 
 template <typename Value>
-struct splaytree_node;
+class node {
+public:
+    node (const Value& value, node* left, node* right)
+            : m_value(value)
+            , m_left(left)
+            , m_right(right) { }
+
+    node (Value&& value, node* left, node* right)
+            : m_value(std::forward<Value>(value))
+            , m_left(left)
+            , m_right(right) { }
+
+    ~node () {
+        delete m_left;
+        delete m_right;
+    }
+
+    Value& value () {
+        return m_value;
+    }
+
+    bool is_root () {
+        return !m_parent;
+    }
+
+    bool is_left_child () {
+        return m_parent && m_parent->m_left == this;
+    }
+
+    template <typename Predicate>
+    static node* search_no_splay (node* root, const Predicate& pred) {
+        node* p = nullptr;
+
+        while (root) {
+            p = root;
+            root = pred(p->m_value) ? p->m_left : p->m_right;
+        }
+
+        return p;
+    }
+
+    template <typename Predicate>
+    static node* search (node* root, const Predicate& pred) {
+        node* p = search_no_splay(root, pred);
+
+        if (p) {
+            p->splay();
+        }
+
+        return p;
+    }
+
+    static node* join (node* lhs, node* rhs) {
+        if (!lhs) {
+            return rhs;
+        }
+
+        if (!rhs) {
+            return lhs;
+        }
+
+        assert(lhs->is_root());
+        assert(rhs->is_root());
+
+        /* Find the largest element of the left-hand tree. */
+        auto root = search(lhs, [] (const Value&) { return false; });
+        assert(!root->m_right);
+
+        root->m_right = rhs;
+        rhs->m_parent = root;
+        return root;
+    }
+
+    /* Convert to non-static function */
+    template <typename Compare>
+    static std::pair<node*,node*> split (node* root, const Value& value, const Compare& comp) {
+        root = search(root,
+                [&comp, &value] (const Value& other) {
+                    return comp(value, other);
+                });
+
+        node* lhs = nullptr;
+        node* rhs = nullptr;
+
+        if (root) {
+            /* Break one of the child links so that the left-hand side
+             * has values less than or equal to the search key, and the
+             * right-hand side has values greater than the search key. */
+            if (comp(value, root->m_value)) {
+                lhs = root->m_left;
+                rhs = root;
+                lhs->m_parent = nullptr;
+                rhs->m_left = nullptr;
+            }
+            else {
+                lhs = root;
+                rhs = root->m_right;
+                lhs->m_right = nullptr;
+                rhs->m_parent = nullptr;
+            }
+        }
+
+        return std::make_pair(lhs, rhs);
+    }
+
+    static node* increment (node* s) {
+        if (!s) {
+            return nullptr;
+        }
+
+        if (s->m_right) {
+            /* Find the smallest element in the right child. */
+            return search_no_splay(s->m_right, [] (const Value&) { return true; });
+        }
+
+        if (s->is_left_child()) {
+            return s->m_parent;
+        }
+
+        while (s->m_parent && !s->is_left_child()) {
+            s = s->m_parent;
+        }
+
+        return s->m_parent;
+    }
+
+private:
+#define SPLAYTREE_rotate(rotdir, offdir) \
+    { \
+        assert(m_parent); \
+        assert(m_parent->offdir == this); \
+        \
+        if (rotdir) { \
+            rotdir->m_parent = m_parent; \
+        } \
+        m_parent->offdir = rotdir; \
+        rotdir = m_parent; \
+        \
+        auto gparent = m_parent->m_parent; \
+        if (gparent) { \
+            (gparent->m_left == m_parent ? \
+             gparent->m_left : gparent->m_right) = this; \
+        } \
+        m_parent = gparent; \
+        rotdir->m_parent = this; \
+    }
+
+    void rotate_right () SPLAYTREE_rotate(m_right, m_left)
+    void rotate_left () SPLAYTREE_rotate(m_left, m_right)
+
+#undef SPLAYTREE_rotate
+
+    void rotate () {
+        assert(!this->is_root());
+
+        if (this->is_left_child()) {
+            rotate_right();
+        }
+        else {
+            rotate_left();
+        }
+    }
+
+    void splay () {
+        while (!this->is_root()) {
+            if (!m_parent->is_root()) {
+                if (this->is_left_child() == m_parent->is_left_child()) {
+                    m_parent->rotate();
+                }
+                else {
+                    rotate();
+                }
+            }
+            rotate();
+        }
+    }
+
+    Value m_value;
+    
+    node* m_parent;
+    node* m_left;
+    node* m_right;
+};
 
 template <typename Value>
-struct splaytree_iterator
-        : std::iterator<std::bidirectional_iterator_tag, Value> {
-    // TODO
-    bool operator!= () const;
+class iterator
+        : public std::iterator<std::forward_iterator_tag, Value> {
+public:
+    using node_type = node<Value>;
 
-    // TODO
-    reference operator* () const;
+    iterator (node_type* node = nullptr)
+            : m_node(node) { }
 
-    // TODO
-    pointer operator-> () const;
+    bool operator!= (const iterator& other) const {
+        return m_node != other.m_node;
+    }
 
-    /* TODO Prefix */
-    splaytree_iterator& operator++ ();
+    reference operator* () {
+        return m_node->value();
+    }
+
+    pointer operator-> () {
+        return &m_node->value();
+    }
+
+    iterator& operator++ () {
+        m_node = node_type::increment(m_node);
+        return *this;
+    }
 
     /* Postfix */
-    splaytree_iterator operator++ (int) {
+    iterator operator++ (int) {
         auto ret = *this;
         ++*this;
         return ret;
     }
 
-    /* TODO Prefix */
-    splaytree_iterator& operator-- ();
-
-    /* Postfix */
-    splaytree_iterator operator-- (int) {
-        auto ret = *this;
-        --*this;
-        return ret;
-    }
+private:
+    node_type* m_node;
 };
 
+#if 0
 template <typename Value>
-struct splaytree_const_iterator;
+struct const_iterator;
+#endif
 
 } // namespace detail
 
-template <typename Value, typename Compare = std::less<value>>
+template <typename Value, typename Compare = std::less<Value>>
 class splaytree {
 public:
     using key_type = Value;
@@ -62,11 +252,10 @@ public:
     using reference = value_type&;
     using const_reference = const value_type&;
 
-    using iterator = detail::splaytree_iterator<value_type>;
-    using const_iterator = detail::splaytree_const_iterator<value_type>;
-
-    using reverse_iterator = std::reverse_iterator<iterator>;
-    using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+    using iterator = detail::iterator<value_type>;
+#if 0
+    using const_iterator = detail::const_iterator<value_type>;
+#endif
 
     using difference_type = ptrdiff_t;
     using size_type = size_t;
@@ -103,21 +292,34 @@ public:
         delete m_root;
     }
 
+    iterator begin () {
+        auto p = node_type::search_no_splay(m_root, [] (const value_type&) {
+                return true;
+            });
+        return iterator(p);
+    }
+
     // TODO
-    iterator begin ();
+#if 0
     const_iterator begin () const;
 
     const_iterator cbegin () const {
         return begin();
     }
+#endif
+
+    iterator end () {
+        return iterator(nullptr);
+    }
 
     // TODO
-    iterator end ();
+#if 0
     const_iterator end () const;
 
     const_iterator cend () const {
         return end();
     }
+#endif
 
     bool operator== (const splaytree<value_type>& other) const {
         if (size() != other.size()) {
@@ -132,10 +334,12 @@ public:
     }
 
     // TODO
+#if 0
     bool operator< (const splaytree<value_type>& other) const;
     bool operator> (const splaytree<value_type>& other) const;
     bool operator<= (const splaytree<value_type>& other) const;
     bool operator>= (const splaytree<value_type>& other) const;
+#endif
 
     /* Unnecessary--I only provided this because the STL requires it. */
     void swap (splaytree& other) {
@@ -145,6 +349,8 @@ public:
 
     friend void swap (splaytree& lhs, splaytree& rhs) {
         using std::swap;
+        swap(lhs.m_comp, rhs.m_comp);
+        swap(lhs.m_size, rhs.m_size);
         swap(lhs.m_root, rhs.m_root);
     }
 
@@ -171,30 +377,6 @@ public:
         return !m_root;
     }
 
-    reverse_iterator rbegin () {
-        return reverse_iterator(end());
-    }
-
-    const_reverse_iterator rbegin () const {
-        return const_reverse_iterator(end());
-    }
-
-    const_reverse_iterator crbegin () const {
-        return rbegin();
-    }
-
-    reverse_iterator rend () {
-        return reverse_iterator(begin());
-    }
-
-    const_reverse_iterator rend () const {
-        return const_reverse_iterator(begin());
-    }
-
-    const_reverse_iterator crend () const {
-        return rend();
-    }
-
     key_compare key_comp () const {
         return m_comp;
     }
@@ -204,6 +386,7 @@ public:
     }
 
     // TODO
+#if 0
     template <typename... Args>
     std::pair<iterator, bool> emplace (Args&&... args);
 
@@ -212,9 +395,35 @@ public:
         /* Ignore the hint for now. */
         return emplace(std::forward<Args>(args)...).first;
     }
+#endif
 
-    // TODO
-    std::pair<iterator, bool> insert (const value_type& value);
+    std::pair<iterator, bool> insert (const value_type& value) {
+        /* printf */
+        std::cout << "inserting " << value;
+
+        node_type* lhs;
+        node_type* rhs;
+        std::tie(lhs, rhs) = node_type::split(m_root, value, m_comp);
+
+        bool success = false;
+        /* We already know that the left-hand side has values less than or
+         * equal to our search key, by the definition of split(). One more
+         * comparison will tell us if the root of the left-hand side is equal
+         * to our search key. */
+        if (!lhs || m_comp(lhs->value(), value)) {
+            m_root = new node_type (value, lhs, rhs);
+            success = true;
+            m_size++;
+        }
+        else {
+            /* Key already exists--put our tree back together. */
+            m_root = node_type::join(lhs, rhs);
+        }
+
+        return std::make_pair(iterator(m_root), success);
+    }
+
+#if 0
     std::pair<iterator, bool> insert (value_type&& value);
 
     iterator insert (const_iterator, const value_type& value) {
@@ -226,6 +435,7 @@ public:
         /* Ignore the hint for now. */
         return insert(value).first;
     }
+#endif
 
     template <typename Iter>
     void insert (Iter first, Iter last) {
@@ -239,13 +449,13 @@ public:
     }
 
     // TODO
+#if 0
     size_type erase (const value_type& value);
 
-    // TODO
     iterator erase (const_iterator pos);
 
-    // TODO
     iterator erase (const_iterator first, const_iterator last);
+#endif
     
     void clear () {
         delete m_root;
@@ -254,6 +464,7 @@ public:
     }
 
     // TODO
+#if 0
     iterator find (const value_type& value);
     const_iterator find (const value_type& value) const;
 
@@ -268,9 +479,10 @@ public:
     std::pair<iterator, iterator> equal_range (const value_type& value);
     std::pair<const_iterator, const_iterator>
     equal_range (const value_type& value) const;
+#endif
 
 private:
-    using node_type = detail::splaytree_node<value_type>;
+    using node_type = detail::node<value_type>;
 
     value_compare m_comp;
     size_type m_size;
