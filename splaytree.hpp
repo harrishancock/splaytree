@@ -16,6 +16,10 @@
 
 namespace detail {
 
+/* TODO separate the linkage (parent, left, right pointers) from the node
+ * class and put it in a separate node_base class, from which node derives.
+ * Implement as many tree operations as possible in terms of this node_base
+ * class (i.e., not in a header file). */
 template <typename Value>
 class node {
 public:
@@ -30,6 +34,8 @@ public:
         delete m_right;
     }
 
+    /* Attach a left child. this must not already have a left child, and left
+     * must not already have a parent. */
     void attach_left (node* left) {
         assert(!m_left);
         m_left = left;
@@ -40,6 +46,7 @@ public:
         }
     }
 
+    /* Symmetric to attach_left. */
     void attach_right (node* right) {
         assert(!m_right);
         m_right = right;
@@ -48,6 +55,29 @@ public:
             assert(!m_right->m_parent);
             m_right->m_parent = this;
         }
+    }
+
+    /* Detach a left child and return it. Returns nullptr if there is no left
+     * child. */
+    node* detach_left () {
+        auto lhs = m_left;
+        m_left = nullptr;
+        if (lhs) {
+            assert(lhs->m_parent == this);
+            lhs->m_parent = nullptr;
+        }
+        return lhs;
+    }
+
+    /* Symmetric to detach_left. */
+    node* detach_right () {
+        auto rhs = m_right;
+        m_right = nullptr;
+        if (rhs) {
+            assert(rhs->m_parent == this);
+            rhs->m_parent = nullptr;
+        }
+        return rhs;
     }
 
     Value& value () {
@@ -62,31 +92,53 @@ public:
         return m_parent && m_parent->m_left == this;
     }
 
-    template <typename Predicate>
-    static node* search_no_splay (node* root, const Predicate& pred) {
+    static node* minimum (node* s) {
+        if (s) while (s->m_left) {
+            s = s->m_left;
+        }
+        return s;
+    }
+
+    static node* maximum (node* s) {
+        if (s) while (s->m_right) {
+            s = s->m_right;
+        }
+        return s;
+    }
+
+
+    template <typename Compare>
+    static node* search (node* s, const Value& value, const Compare& comp) {
         node* p = nullptr;
 
-        while (root) {
-            p = root;
-            root = pred(p->m_value) ? p->m_left : p->m_right;
+        while (s) {
+            p = s;
+            if (comp(value, s->m_value)) {
+                s = s->m_left;
+            }
+            else if (comp(s->m_value, value)) {
+                s = s->m_right;
+            }
+            else {
+                break;
+            }
         }
 
         return p;
     }
 
-    template <typename Predicate>
-    static node* search (node* root, const Predicate& pred) {
-        node* p = search_no_splay(root, pred);
+    template <typename Compare>
+    static node* find (node* s, const Value& value, const Compare& comp) {
+        s = search(s, value, comp);
 
-        if (p) {
-            p->splay();
+        if (s) {
+            s->splay();
         }
 
-        return p;
+        return s;
     }
 
     static node* join (node* lhs, node* rhs) {
-        printf("JOIN!!!\n");
         if (!lhs) {
             return rhs;
         }
@@ -99,24 +151,21 @@ public:
         assert(rhs->is_root());
 
         /* Find the largest element of the left-hand tree. */
-        auto root = search(lhs, [] (const Value&) { return false; });
+        auto root = maximum(lhs);
+        root->splay();
         root->attach_right(rhs);
 
         return root;
     }
 
-    /* Convert to non-static function */
     template <typename Compare>
     static std::pair<node*,node*> split (node* root, const Value& value, const Compare& comp) {
-        root = search(root,
-                [&comp, &value] (const Value& other) {
-                    return comp(value, other);
-                });
-
         node* lhs = nullptr;
         node* rhs = nullptr;
 
+        root = search(root, value, comp);
         if (root) {
+            root->splay();
             /* Break one of the child links so that the left-hand side
              * has values less than or equal to the search key, and the
              * right-hand side has values greater than the search key. */
@@ -143,22 +192,19 @@ public:
 
     static node* increment (node* s) {
         if (!s) {
-            printf("increment: end\n");
             return nullptr;
         }
 
         if (s->m_right) {
-            printf("increment: right\n");
-            /* Find the smallest element in the right child. */
-            return search_no_splay(s->m_right, [] (const Value&) { return true; });
+            return minimum(s->m_right);
         }
 
+        /* Climb up the tree as long as s is a right child. In other words:
+         * stop when s is a left child OR the root. */
         while (s->m_parent && !s->is_left_child()) {
-            printf("increment: up to the left\n");
             s = s->m_parent;
         }
 
-        printf("increment: up to the right\n");
         return s->m_parent;
     }
 
@@ -169,6 +215,31 @@ public:
 
         // TODO
         return true;
+    }
+
+    void dump_structure () {
+        std::cout << m_value << " | ";
+        if (m_left) {
+            std::cout << m_left->value() << ' ';
+        }
+        else {
+            std::cout << "(nil) ";
+        }
+
+        if (m_right) {
+            std::cout << m_right->value();
+        }
+        else {
+            std::cout << "(nil)";
+        }
+        std::cout << '\n';
+
+        if (m_left) {
+            m_left->dump_structure();
+        }
+        if (m_right) {
+            m_right->dump_structure();
+        }
     }
 
 private:
@@ -229,20 +300,41 @@ private:
     node* m_right = nullptr;
 };
 
+/* const_iterator is the only iterator implemented, because a splaytree is a
+ * model of a set: the key and the value are the same, and modifying the key
+ * of an element of an associative container is stupid (without removing and
+ * then reinserting the element). For example, take the following
+ * splaytree, s, with elements stored in nondecreasing order:
+ *    2
+ *   /
+ *  1
+ * With a mutable iterator, the expression "*s.begin() = 3;" would be valid,
+ * but it would put the tree into an invalid state:
+ *    2
+ *   /
+ *  3
+ * Best to avoid such horrors--if mutability is required, such as using a
+ * splaytree to implement a map, the user can use const_cast. */
 template <typename Value>
-class iterator
-        : public std::iterator<std::forward_iterator_tag, Value> {
+class const_iterator
+        : public std::iterator<std::forward_iterator_tag,
+                typename std::add_const<Value>::type> {
 public:
-    using base_type = std::iterator<std::forward_iterator_tag, Value>;
+    using base_type = std::iterator<std::forward_iterator_tag,
+          typename std::add_const<Value>::type>;
 
     using node_type = node<Value>;
     using reference = typename base_type::reference;
     using pointer = typename base_type::pointer;
 
-    iterator (node_type* node = nullptr)
+    const_iterator (node_type* node = nullptr)
             : m_node(node) { }
 
-    bool operator!= (const iterator& other) const {
+    bool operator== (const const_iterator& other) const {
+        return m_node == other.m_node;
+    }
+
+    bool operator!= (const const_iterator& other) const {
         return m_node != other.m_node;
     }
 
@@ -254,13 +346,13 @@ public:
         return &m_node->value();
     }
 
-    iterator& operator++ () {
+    const_iterator& operator++ () {
         m_node = node_type::increment(m_node);
         return *this;
     }
 
     /* Postfix */
-    iterator operator++ (int) {
+    const_iterator operator++ (int) {
         auto ret = *this;
         ++*this;
         return ret;
@@ -270,10 +362,8 @@ private:
     node_type* m_node;
 };
 
-#if 0
 template <typename Value>
-struct const_iterator;
-#endif
+using iterator = const_iterator<Value>;
 
 } // namespace detail
 
@@ -289,9 +379,7 @@ public:
     using const_reference = const value_type&;
 
     using iterator = detail::iterator<value_type>;
-#if 0
     using const_iterator = detail::const_iterator<value_type>;
-#endif
 
     using difference_type = ptrdiff_t;
     using size_type = size_t;
@@ -328,34 +416,41 @@ public:
         delete m_root;
     }
 
-    iterator begin () {
-        auto p = node_type::search_no_splay(m_root, [] (const value_type&) {
-                return true;
-            });
-        return iterator(p);
+    void swap (splaytree& other) {
+        using std::swap;
+        swap(*this, other);
     }
 
-    // TODO
-#if 0
-    const_iterator begin () const;
+    friend void swap (splaytree& lhs, splaytree& rhs) {
+        using std::swap;
+        swap(lhs.m_comp, rhs.m_comp);
+        swap(lhs.m_size, rhs.m_size);
+        swap(lhs.m_root, rhs.m_root);
+    }
+
+    iterator begin () {
+        return iterator(node_type::minimum(m_root));
+    }
+
+    const_iterator begin () const {
+        return const_iterator(node_type::minimum(m_root));
+    }
 
     const_iterator cbegin () const {
         return begin();
     }
-#endif
 
     iterator end () {
         return iterator(nullptr);
     }
 
-    // TODO
-#if 0
-    const_iterator end () const;
+    const_iterator end () const {
+        return const_iterator(nullptr);
+    }
 
     const_iterator cend () const {
         return end();
     }
-#endif
 
     bool operator== (const splaytree<value_type>& other) const {
         if (size() != other.size()) {
@@ -369,25 +464,21 @@ public:
         return !(*this == other);
     }
 
-    // TODO
-#if 0
-    bool operator< (const splaytree<value_type>& other) const;
-    bool operator> (const splaytree<value_type>& other) const;
-    bool operator<= (const splaytree<value_type>& other) const;
-    bool operator>= (const splaytree<value_type>& other) const;
-#endif
-
-    /* Unnecessary--I only provided this because the STL requires it. */
-    void swap (splaytree& other) {
-        using std::swap;
-        swap(*this, other);
+    bool operator< (const splaytree<value_type>& other) const {
+        return std::lexicographical_compare(
+                begin(), end(), other.begin(), other.end());
     }
 
-    friend void swap (splaytree& lhs, splaytree& rhs) {
-        using std::swap;
-        swap(lhs.m_comp, rhs.m_comp);
-        swap(lhs.m_size, rhs.m_size);
-        swap(lhs.m_root, rhs.m_root);
+    bool operator> (const splaytree<value_type>& other) const {
+        return other < *this;
+    }
+
+    bool operator<= (const splaytree<value_type>& other) const {
+        return !(other < *this);
+    }
+
+    bool operator>= (const splaytree<value_type>& other) const {
+        return !(*this < other);
     }
 
     splaytree& operator= (splaytree other) {
@@ -434,15 +525,26 @@ public:
 #endif
 
     std::pair<iterator, bool> insert (const value_type& value) {
-        /* printf */
-        std::cout << "inserting " << value << '\n';
+        if (end() == find(value)) {
+            auto newroot = new node_type(value);
+            return insert_helper(newroot);
+        }
+        return std::make_pair(iterator(m_root), false);
+    }
 
+    std::pair<iterator, bool> insert (value_type&& value) {
+        if (end() == find(value)) {
+            auto newroot = new node_type(std::forward<value_type>(value));
+            return insert_helper(newroot);
+        }
+        return std::make_pair(iterator(m_root), false);
+    }
+
+#if 0
+    std::pair<iterator, bool> insert (const value_type& value) {
         node_type* lhs;
         node_type* rhs;
         std::tie(lhs, rhs) = node_type::split(m_root, value, m_comp);
-
-        printf("root<%d> lhs<%d> rhs<%d>\n", m_root ? m_root->value() : -666, lhs ? lhs->value() : -666, rhs ? rhs->value() : -666);
-
 
         bool success = false;
         /* We already know that the left-hand side has values less than or
@@ -461,12 +563,31 @@ public:
             m_root = node_type::join(lhs, rhs);
         }
 
-        assert(node_type::is_valid(m_root));
         return std::make_pair(iterator(m_root), success);
     }
 
-#if 0
-    std::pair<iterator, bool> insert (value_type&& value);
+    /* FIXME code duplication with above */
+    std::pair<iterator, bool> insert (value_type&& value) {
+        node_type* lhs;
+        node_type* rhs;
+        std::tie(lhs, rhs) = node_type::split(m_root, value, m_comp);
+
+        bool success = false;
+        if (!lhs || m_comp(lhs->value(), value)) {
+            m_root = new node_type (std::forward<value_type>(value));
+            m_root->attach_left(lhs);
+            m_root->attach_right(rhs);
+            success = true;
+            m_size++;
+        }
+        else {
+            /* Key already exists--put our tree back together. */
+            m_root = node_type::join(lhs, rhs);
+        }
+
+        return std::make_pair(iterator(m_root), success);
+    }
+#endif
 
     iterator insert (const_iterator, const value_type& value) {
         /* Ignore the hint for now. */
@@ -477,7 +598,6 @@ public:
         /* Ignore the hint for now. */
         return insert(value).first;
     }
-#endif
 
     template <typename Iter>
     void insert (Iter first, Iter last) {
@@ -505,11 +625,21 @@ public:
         m_size = 0;
     }
 
+    iterator find (const value_type& value) {
+        m_root = node_type::find(m_root, value, m_comp);
+
+        if (!m_root || m_comp(value, m_root->value()) || m_comp(m_root->value(), value)) {
+            /* Not found. */
+            return iterator(nullptr);
+        }
+
+        return iterator(m_root);
+    }
+
+    /* TODO provide a const find_no_splay() method */
+
     // TODO
 #if 0
-    iterator find (const value_type& value);
-    const_iterator find (const value_type& value) const;
-
     size_type count (const value_type& value);
 
     iterator lower_bound (const value_type& value);
@@ -523,8 +653,43 @@ public:
     equal_range (const value_type& value) const;
 #endif
 
+    /* DEBUG */
+    void dump_structure () {
+        if (m_root) {
+            m_root->dump_structure();
+        }
+        else {
+            std::cout << "(nil)\n";
+        }
+    }
+
 private:
     using node_type = detail::node<value_type>;
+
+    std::pair<iterator,bool> insert_helper (node_type* newroot) {
+        assert(newroot);
+
+        node_type* lhs = nullptr;
+        node_type* rhs = nullptr;
+
+        if (m_root) {
+            if (m_comp(newroot->value(), m_root->value())) {
+                lhs = m_root->detach_left();
+                rhs = m_root;
+            }
+            else {
+                assert(m_comp(m_root->value(), newroot->value()));
+                lhs = m_root;
+                rhs = m_root->detach_right();
+            }
+        }
+
+        m_root = newroot;
+        m_root->attach_left(lhs);
+        m_root->attach_right(rhs);
+
+        return std::make_pair(iterator(m_root), true);
+    }
 
     value_compare m_comp;
     size_type m_size;
