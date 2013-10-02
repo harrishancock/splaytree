@@ -26,8 +26,9 @@ public:
     node (const Value& value)
             : m_value(value) { }
 
-    node (Value&& value)
-            : m_value(std::forward<Value>(value)) { }
+    template <typename... Args>
+    node (Args&&... args)
+            : m_value(std::forward<Args>(args)...) { }
 
     ~node () {
         delete m_left;
@@ -136,58 +137,6 @@ public:
         }
 
         return s;
-    }
-
-    static node* join (node* lhs, node* rhs) {
-        if (!lhs) {
-            return rhs;
-        }
-
-        if (!rhs) {
-            return lhs;
-        }
-
-        assert(lhs->is_root());
-        assert(rhs->is_root());
-
-        /* Find the largest element of the left-hand tree. */
-        auto root = maximum(lhs);
-        root->splay();
-        root->attach_right(rhs);
-
-        return root;
-    }
-
-    template <typename Compare>
-    static std::pair<node*,node*> split (node* root, const Value& value, const Compare& comp) {
-        node* lhs = nullptr;
-        node* rhs = nullptr;
-
-        root = search(root, value, comp);
-        if (root) {
-            root->splay();
-            /* Break one of the child links so that the left-hand side
-             * has values less than or equal to the search key, and the
-             * right-hand side has values greater than the search key. */
-            if (comp(value, root->m_value)) {
-                lhs = root->m_left;
-                rhs = root;
-                if (lhs) {
-                    lhs->m_parent = nullptr;
-                }
-                rhs->m_left = nullptr;
-            }
-            else {
-                lhs = root;
-                rhs = root->m_right;
-                lhs->m_right = nullptr;
-                if (rhs) {
-                    rhs->m_parent = nullptr;
-                }
-            }
-        }
-
-        return std::make_pair(lhs, rhs);
     }
 
     static node* increment (node* s) {
@@ -512,17 +461,23 @@ public:
         return m_comp;
     }
 
-    // TODO
-#if 0
     template <typename... Args>
-    std::pair<iterator, bool> emplace (Args&&... args);
+    std::pair<iterator, bool> emplace (Args&&... args) {
+        /* TODO I'll have to study how other people implement emplace() for
+         * their data structures--this feels flawed. */
+        auto newroot = new node_type (std::forward<Args>(args)...);
+        if (end() == find(newroot->value())) {
+            return insert_helper(newroot);
+        }
+        delete newroot;
+        return std::make_pair(iterator(m_root), false);
+    }
 
     template <typename... Args>
     iterator emplace_hint (const_iterator, Args&&... args) {
         /* Ignore the hint for now. */
         return emplace(std::forward<Args>(args)...).first;
     }
-#endif
 
     std::pair<iterator, bool> insert (const value_type& value) {
         if (end() == find(value)) {
@@ -540,62 +495,13 @@ public:
         return std::make_pair(iterator(m_root), false);
     }
 
-#if 0
-    std::pair<iterator, bool> insert (const value_type& value) {
-        node_type* lhs;
-        node_type* rhs;
-        std::tie(lhs, rhs) = node_type::split(m_root, value, m_comp);
-
-        bool success = false;
-        /* We already know that the left-hand side has values less than or
-         * equal to our search key, by the definition of split(). One more
-         * comparison will tell us if the root of the left-hand side is equal
-         * to our search key. */
-        if (!lhs || m_comp(lhs->value(), value)) {
-            m_root = new node_type (value);
-            m_root->attach_left(lhs);
-            m_root->attach_right(rhs);
-            success = true;
-            m_size++;
-        }
-        else {
-            /* Key already exists--put our tree back together. */
-            m_root = node_type::join(lhs, rhs);
-        }
-
-        return std::make_pair(iterator(m_root), success);
-    }
-
-    /* FIXME code duplication with above */
-    std::pair<iterator, bool> insert (value_type&& value) {
-        node_type* lhs;
-        node_type* rhs;
-        std::tie(lhs, rhs) = node_type::split(m_root, value, m_comp);
-
-        bool success = false;
-        if (!lhs || m_comp(lhs->value(), value)) {
-            m_root = new node_type (std::forward<value_type>(value));
-            m_root->attach_left(lhs);
-            m_root->attach_right(rhs);
-            success = true;
-            m_size++;
-        }
-        else {
-            /* Key already exists--put our tree back together. */
-            m_root = node_type::join(lhs, rhs);
-        }
-
-        return std::make_pair(iterator(m_root), success);
-    }
-#endif
-
     iterator insert (const_iterator, const value_type& value) {
-        /* Ignore the hint for now. */
+        /* Ignore the hint. */
         return insert(value).first;
     }
 
     iterator insert (const_iterator, value_type&& value) {
-        /* Ignore the hint for now. */
+        /* Ignore the hint. */
         return insert(value).first;
     }
 
@@ -687,6 +593,8 @@ private:
         m_root = newroot;
         m_root->attach_left(lhs);
         m_root->attach_right(rhs);
+
+        ++m_size;
 
         return std::make_pair(iterator(m_root), true);
     }

@@ -14,7 +14,9 @@ int main () {
 
     splaytree<int> st { v.begin(), v.end() };
 
+    printf("st.size() = %zu\n", st.size());
     assert(!st.insert(30).second);
+    printf("st.size() = %zu\n", st.size());
 
 #if 0
     for (auto i : st) {
