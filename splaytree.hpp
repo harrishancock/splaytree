@@ -139,6 +139,35 @@ public:
         return s;
     }
 
+    static node* join (node* lhs, node* rhs) {
+        if (!lhs) {
+            return rhs;
+        }
+        if (!rhs) {
+            return lhs;
+        }
+
+        assert(lhs->is_root());
+        assert(rhs->is_root());
+
+        /* Find the largest element of the left-hand tree. */
+        auto root = maximum(lhs);
+        root->splay();
+        root->attach_right(rhs);
+
+        return root;
+    }
+
+    static node* erase (node* s) {
+        assert(s);
+        s->splay();
+        auto lhs = s->detach_left();
+        auto rhs = s->detach_right();
+        delete s;
+        s = nullptr;
+        return join(lhs, rhs);
+    }
+
     static node* increment (node* s) {
         if (!s) {
             return nullptr;
@@ -155,15 +184,6 @@ public:
         }
 
         return s->m_parent;
-    }
-
-    static bool is_valid (node* s) {
-        if (!s) {
-            return true;
-        }
-
-        // TODO
-        return true;
     }
 
     void dump_structure () {
@@ -252,8 +272,8 @@ private:
 /* const_iterator is the only iterator implemented, because a splaytree is a
  * model of a set: the key and the value are the same, and modifying the key
  * of an element of an associative container is stupid (without removing and
- * then reinserting the element). For example, take the following
- * splaytree, s, with elements stored in nondecreasing order:
+ * then reinserting the element). For example, take the following splaytree,
+ * s, with elements stored in nondecreasing order:
  *    2
  *   /
  *  1
@@ -265,14 +285,14 @@ private:
  * Best to avoid such horrors--if mutability is required, such as using a
  * splaytree to implement a map, the user can use const_cast. */
 template <typename Value>
-class const_iterator
-        : public std::iterator<std::forward_iterator_tag,
+struct const_iterator
+        : std::iterator<std::forward_iterator_tag,
                 typename std::add_const<Value>::type> {
-public:
+    using node_type = node<Value>;
+    
     using base_type = std::iterator<std::forward_iterator_tag,
           typename std::add_const<Value>::type>;
 
-    using node_type = node<Value>;
     using reference = typename base_type::reference;
     using pointer = typename base_type::pointer;
 
@@ -307,12 +327,9 @@ public:
         return ret;
     }
 
-private:
+    /* FIXME I wish this were encapsulated. friend the splaytree class? */
     node_type* m_node;
 };
-
-template <typename Value>
-using iterator = const_iterator<Value>;
 
 } // namespace detail
 
@@ -327,7 +344,9 @@ public:
     using reference = value_type&;
     using const_reference = const value_type&;
 
-    using iterator = detail::iterator<value_type>;
+    using node_type = detail::node<value_type>;
+
+    using iterator = detail::const_iterator<value_type>;
     using const_iterator = detail::const_iterator<value_type>;
 
     using difference_type = ptrdiff_t;
@@ -450,6 +469,7 @@ public:
     }
 
     bool empty () const {
+        assert(!!m_size == !!m_root);
         return !m_root;
     }
 
@@ -467,9 +487,10 @@ public:
          * their data structures--this feels flawed. */
         auto newroot = new node_type (std::forward<Args>(args)...);
         if (end() == find(newroot->value())) {
-            return insert_helper(newroot);
+            return insert_aux(newroot);
         }
         delete newroot;
+        newroot = nullptr;
         return std::make_pair(iterator(m_root), false);
     }
 
@@ -482,7 +503,7 @@ public:
     std::pair<iterator, bool> insert (const value_type& value) {
         if (end() == find(value)) {
             auto newroot = new node_type(value);
-            return insert_helper(newroot);
+            return insert_aux(newroot);
         }
         return std::make_pair(iterator(m_root), false);
     }
@@ -490,7 +511,7 @@ public:
     std::pair<iterator, bool> insert (value_type&& value) {
         if (end() == find(value)) {
             auto newroot = new node_type(std::forward<value_type>(value));
-            return insert_helper(newroot);
+            return insert_aux(newroot);
         }
         return std::make_pair(iterator(m_root), false);
     }
@@ -516,14 +537,38 @@ public:
         insert(ilist.begin(), ilist.end());
     }
 
-    // TODO
-#if 0
-    size_type erase (const value_type& value);
+    size_type erase (const value_type& value) {
+        size_type count = 0;
+        auto it = find(value);
 
-    iterator erase (const_iterator pos);
+        /* Note that this allows equivalent keys, for the future. */
+        while (end() != it) {
+            erase(it);
+            ++count;
+            it = find(value);
+        }
 
-    iterator erase (const_iterator first, const_iterator last);
-#endif
+        return count;
+    }
+
+    iterator erase (const_iterator pos) {
+        assert(pos.m_node);
+
+        auto ret = pos;
+        ++ret;
+
+        m_root = node_type::erase(pos.m_node);
+        --m_size;
+
+        return ret;
+    }
+
+    iterator erase (const_iterator first, const_iterator last) {
+        while (first != last) {
+            first = erase(first);
+        }
+        return last;
+    }
     
     void clear () {
         delete m_root;
@@ -570,9 +615,11 @@ public:
     }
 
 private:
-    using node_type = detail::node<value_type>;
-
-    std::pair<iterator,bool> insert_helper (node_type* newroot) {
+    /* Auxiliary function called by insert() to reduce code duplication.
+     * Preconditions: newroot is the newly created element to be inserted, and
+     * the tree has been arranged such that the correct place for the new root
+     * node is between the current root and one of its children. */
+    std::pair<iterator,bool> insert_aux (node_type* newroot) {
         assert(newroot);
 
         node_type* lhs = nullptr;
