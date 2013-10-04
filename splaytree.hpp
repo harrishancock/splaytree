@@ -31,55 +31,19 @@ public:
             : m_value(std::forward<Args>(args)...) { }
 
     ~node () {
-        delete m_left;
-        delete m_right;
+        delete left();
+        delete right();
     }
 
-    /* Attach a left child. this must not already have a left child, and left
-     * must not already have a parent. */
-    void attach_left (node* left) {
-        assert(!m_left);
-        m_left = left;
-
-        if (m_left) {
-            assert(!m_left->m_parent);
-            m_left->m_parent = this;
-        }
-    }
-
-    /* Symmetric to attach_left. */
-    void attach_right (node* right) {
-        assert(!m_right);
-        m_right = right;
-
-        if (m_right) {
-            assert(!m_right->m_parent);
-            m_right->m_parent = this;
-        }
-    }
+    /* Attach a child. We must not already have a child in that position,
+     * and it must must not already have a parent. */
+    void attach_left (node* lhs) { attach<LEFT>(lhs); }
+    void attach_right (node* rhs) { attach<RIGHT>(rhs); }
 
     /* Detach a left child and return it. Returns nullptr if there is no left
      * child. */
-    node* detach_left () {
-        auto lhs = m_left;
-        m_left = nullptr;
-        if (lhs) {
-            assert(lhs->m_parent == this);
-            lhs->m_parent = nullptr;
-        }
-        return lhs;
-    }
-
-    /* Symmetric to detach_left. */
-    node* detach_right () {
-        auto rhs = m_right;
-        m_right = nullptr;
-        if (rhs) {
-            assert(rhs->m_parent == this);
-            rhs->m_parent = nullptr;
-        }
-        return rhs;
-    }
+    node* detach_left () { return detach<LEFT>(); }
+    node* detach_right () { return detach<RIGHT>(); }
 
     Value& value () {
         return m_value;
@@ -90,19 +54,19 @@ public:
     }
 
     bool is_left_child () {
-        return m_parent && m_parent->m_left == this;
+        return m_parent && m_parent->left() == this;
     }
 
     static node* minimum (node* s) {
-        if (s) while (s->m_left) {
-            s = s->m_left;
+        if (s) while (s->left()) {
+            s = s->left();
         }
         return s;
     }
 
     static node* maximum (node* s) {
-        if (s) while (s->m_right) {
-            s = s->m_right;
+        if (s) while (s->right()) {
+            s = s->right();
         }
         return s;
     }
@@ -115,10 +79,10 @@ public:
         while (s) {
             p = s;
             if (comp(value, s->m_value)) {
-                s = s->m_left;
+                s = s->left();
             }
             else if (comp(s->m_value, value)) {
-                s = s->m_right;
+                s = s->right();
             }
             else {
                 break;
@@ -173,8 +137,8 @@ public:
             return nullptr;
         }
 
-        if (s->m_right) {
-            return minimum(s->m_right);
+        if (s->right()) {
+            return minimum(s->right());
         }
 
         /* Climb up the tree as long as s is a right child. In other words:
@@ -188,63 +152,83 @@ public:
 
     void dump_structure () {
         std::cout << m_value << " | ";
-        if (m_left) {
-            std::cout << m_left->value() << ' ';
+        if (left()) {
+            std::cout << left()->value() << ' ';
         }
         else {
             std::cout << "(nil) ";
         }
 
-        if (m_right) {
-            std::cout << m_right->value();
+        if (right()) {
+            std::cout << right()->value();
         }
         else {
             std::cout << "(nil)";
         }
         std::cout << '\n';
 
-        if (m_left) {
-            m_left->dump_structure();
+        if (left()) {
+            left()->dump_structure();
         }
-        if (m_right) {
-            m_right->dump_structure();
+        if (right()) {
+            right()->dump_structure();
         }
     }
 
 private:
-#define SPLAYTREE_rotate(rotdir, offdir) \
-    { \
-        assert(m_parent); \
-        assert(m_parent->offdir == this); \
-        \
-        if (rotdir) { \
-            rotdir->m_parent = m_parent; \
-        } \
-        m_parent->offdir = rotdir; \
-        rotdir = m_parent; \
-        \
-        auto gparent = m_parent->m_parent; \
-        if (gparent) { \
-            (gparent->m_left == m_parent ? \
-             gparent->m_left : gparent->m_right) = this; \
-        } \
-        m_parent = gparent; \
-        rotdir->m_parent = this; \
+    /* Use like so: std::get<LEFT>(m_children) = ... */
+    enum child_tag { LEFT, RIGHT };
+
+    template <child_tag Child>
+    void attach (node* other) {
+        assert(!get<Child>());
+        get<Child>() = other;
+
+        if (get<Child>()) {
+            assert(!get<Child>()->m_parent);
+            get<Child>()->m_parent = this;
+        }
     }
 
-    void rotate_right () SPLAYTREE_rotate(m_right, m_left)
-    void rotate_left () SPLAYTREE_rotate(m_left, m_right)
+    template <child_tag Child>
+    node* detach () {
+        auto other = get<Child>();
+        get<Child>() = nullptr;
+        if (other) {
+            assert(other->m_parent == this);
+            other->m_parent = nullptr;
+        }
+        return other;
+    }
 
-#undef SPLAYTREE_rotate
+    template <child_tag RotSide, child_tag OffSide>
+    void rotate () {
+        assert(m_parent);
+        assert(m_parent->get<OffSide>() == this);
+
+        if (get<RotSide>()) {
+            get<RotSide>()->m_parent = m_parent;
+        }
+        m_parent->get<OffSide>() = get<RotSide>();
+        get<RotSide>() = m_parent;
+
+        auto gparent = m_parent->m_parent;
+        if (gparent) {
+            (gparent->left() == m_parent ?
+             gparent->left() : gparent->right()) = this;
+        }
+        m_parent = gparent;
+        get<RotSide>()->m_parent = this;
+    }
 
     void rotate () {
         assert(!this->is_root());
 
         if (this->is_left_child()) {
-            rotate_right();
+            rotate<RIGHT, LEFT>();
         }
         else {
-            rotate_left();
+            rotate<LEFT, RIGHT>();
         }
     }
 
@@ -262,11 +246,26 @@ private:
         }
     }
 
+    /* Returning references to pointers. Yup. */
+    node*& left () {
+        return get<LEFT>();
+    }
+
+    node*& right () {
+        return get<RIGHT>();
+    }
+
+    template <child_tag ChildTag>
+    node*& get () {
+        return std::get<ChildTag>(m_children);
+    }
+
     Value m_value;
     
     node* m_parent = nullptr;
-    node* m_left = nullptr;
-    node* m_right = nullptr;
+
+    /* m_children's pointers will be default-constructed to nullptr. */
+    std::pair<node*,node*> m_children;
 };
 
 /* const_iterator is the only iterator implemented, because a splaytree is a
