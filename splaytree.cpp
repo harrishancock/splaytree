@@ -12,7 +12,7 @@ int main () {
     }
     std::random_shuffle(v.begin(), v.end());
 
-    splaytree<int> st { v.begin(), v.end() };
+    splaytree::splaytree<int> st { v.begin(), v.end() };
 
     assert(!st.insert(30).second);
 
@@ -27,6 +27,27 @@ int main () {
     }
 
     printf("\n");
+
+    printf("Printing range [55,100]\n");
+    for (auto cit = st.lower_bound(55); cit != st.upper_bound(100); ++cit) {
+        printf("%d\n", *cit);
+    }
+
+    printf("erasing 53\n");
+    assert(1 == st.erase(53));
+
+    printf("Printing range [50,55)\n");
+    for (auto cit = st.lower_bound(50); cit != st.lower_bound(55); ++cit) {
+        printf("%d\n", *cit);
+    }
+
+    printf("Printing range (50,55]\n");
+    for (auto cit = st.upper_bound(50); cit != st.upper_bound(55); ++cit) {
+        printf("%d\n", *cit);
+    }
+
+    printf("\n");
+    printf("st.count(33) == %zu\n", st.count(33));
     assert(st.end() == st.find(100));
     assert(st.end() != st.find(33));
 
@@ -66,7 +87,7 @@ int main () {
         printf("%d\n", i);
     }
 
-    splaytree<int> st2 = {
+    splaytree::splaytree<int> st2 = {
         123, 456, 789
     };
 

@@ -14,20 +14,23 @@
 #include <iterator>
 #include <limits>
 
+namespace splaytree {
 namespace detail {
 
 /* TODO separate the linkage (parent, left, right pointers) from the node
  * class and put it in a separate node_base class, from which node derives.
  * Implement as many tree operations as possible in terms of this node_base
  * class (i.e., not in a header file). */
-template <typename Value>
+template <typename T>
 class node {
 public:
-    node (const Value& value)
+    using value_type = T;
+
+    explicit node (const value_type& value)
             : m_value(value) { }
 
     template <typename... Args>
-    node (Args&&... args)
+    explicit node (Args&&... args)
             : m_value(std::forward<Args>(args)...) { }
 
     ~node () {
@@ -45,7 +48,7 @@ public:
     node* detach_left () { return detach<LEFT>(); }
     node* detach_right () { return detach<RIGHT>(); }
 
-    Value& value () {
+    value_type& value () {
         return m_value;
     }
 
@@ -71,9 +74,8 @@ public:
         return s;
     }
 
-
     template <typename Compare>
-    static node* search (node* s, const Value& value, const Compare& comp) {
+    static node* search (node* s, const value_type& value, const Compare& comp) {
         node* p = nullptr;
 
         while (s) {
@@ -93,7 +95,7 @@ public:
     }
 
     template <typename Compare>
-    static node* find (node* s, const Value& value, const Compare& comp) {
+    static node* find (node* s, const value_type& value, const Compare& comp) {
         s = search(s, value, comp);
 
         if (s) {
@@ -150,6 +152,70 @@ public:
         return s->m_parent;
     }
 
+    static node* decrement (node* s) {
+        if (!s) {
+            return nullptr;
+        }
+
+        if (s->left()) {
+            return maximum(s->left());
+        }
+
+        while (s->m_parent && s->is_left_child()) {
+            s = s->m_parent;
+        }
+
+        return s->m_parent;
+    }
+
+    template <typename Compare>
+    static node* lower_bound (node* s, const value_type& value, const Compare& comp) {
+        s = search(s, value, comp);
+
+        if (!s) {
+            return nullptr;
+        }
+
+        /* If this node is less than the search key, then the search key was
+         * not found. The next node must be the first node that is not less
+         * than the search key. */
+        if (comp(s->value(), value)) {
+            return increment(s);
+        }
+
+        /* This node is greater than or equal to the search key. Decrement
+         * until we find the first node that is not less than the search key.
+         */
+        auto p = s;
+        while (p && !comp(p->value(), value)) {
+            s = p;
+            p = decrement(p);
+        }
+
+        return s;
+    }
+
+    template <typename Compare>
+    static node* upper_bound (node* s, const value_type& value, const Compare& comp) {
+        s = search(s, value, comp);
+
+        if (!s) {
+            return nullptr;
+        }
+
+        if (comp(s->value(), value)) {
+            return increment(s);
+        }
+
+        /* This node is greater than or equal to the search key. Increment
+         * until we find a node that is strictly greater. */
+        while (s && !comp(value, s->value())) {
+            s = increment(s);
+        }
+
+        return s;
+    }
+
     void dump_structure () {
         std::cout << m_value << " | ";
         if (left()) {
@@ -201,16 +267,30 @@ private:
         return other;
     }
 
-    template <child_tag RotSide, child_tag OffSide>
+    /* Rotate this node so that it becomes the parent of its rotation-side
+     * child. For example, for a right rotation:
+     *      y             x
+     *     / \           / \
+     *    x   C   ==>   A   y
+     *   / \               / \
+     *  A   B             B   C
+     * where x, y are splay tree nodes; A, B, C are splay subtrees.
+     *
+     * In the code below, RS = rotation-side, OS = other-side.
+     */
+    template <child_tag RS>
     void rotate () {
-        assert(m_parent);
-        assert(m_parent->get<OffSide>() == this);
+        constexpr static const child_tag OS
+            = RS == LEFT ? RIGHT : LEFT;
 
-        if (get<RotSide>()) {
-            get<RotSide>()->m_parent = m_parent;
+        assert(m_parent);
+        assert(m_parent->get<OS>() == this);
+
+        if (get<RS>()) {
+            get<RS>()->m_parent = m_parent;
         }
-        m_parent->get<OffSide>() = get<RotSide>();
-        get<RotSide>() = m_parent;
+        m_parent->get<OS>() = get<RS>();
+        get<RS>() = m_parent;
 
         auto gparent = m_parent->m_parent;
         if (gparent) {
@@ -218,20 +298,24 @@ private:
              gparent->left() : gparent->right()) = this;
         }
         m_parent = gparent;
-        get<RotSide>()->m_parent = this;
+        get<RS>()->m_parent = this;
     }
 
+    /* Any given node can only rotate in one direction (or not at all, for the
+     * root node), so wrap the rotate<LEFT> and rotate<RIGHT> calls. */
     void rotate () {
         assert(!this->is_root());
 
         if (this->is_left_child()) {
-            rotate<RIGHT, LEFT>();
+            rotate<RIGHT>();
         }
         else {
-            rotate<LEFT, RIGHT>();
+            rotate<LEFT>();
         }
     }
 
+    /* Move this node into the root position, while maintaining the symmetric
+     * order of the tree as a whole. */
     void splay () {
         while (!this->is_root()) {
             if (!m_parent->is_root()) {
@@ -255,12 +339,12 @@ private:
         return get<RIGHT>();
     }
 
-    template <child_tag ChildTag>
+    template <child_tag Child>
     node*& get () {
-        return std::get<ChildTag>(m_children);
+        return std::get<Child>(m_children);
     }
 
-    Value m_value;
+    value_type m_value;
     
     node* m_parent = nullptr;
 
@@ -283,19 +367,19 @@ private:
  *  3
  * Best to avoid such horrors--if mutability is required, such as using a
  * splaytree to implement a map, the user can use const_cast. */
-template <typename Value>
+template <typename T>
 struct const_iterator
         : std::iterator<std::forward_iterator_tag,
-                typename std::add_const<Value>::type> {
-    using node_type = node<Value>;
+                typename std::add_const<T>::type> {
+    using node_type = node<T>;
     
     using base_type = std::iterator<std::forward_iterator_tag,
-          typename std::add_const<Value>::type>;
+          typename std::add_const<T>::type>;
 
     using reference = typename base_type::reference;
     using pointer = typename base_type::pointer;
 
-    const_iterator (node_type* node = nullptr)
+    explicit const_iterator (node_type* node = nullptr)
             : m_node(node) { }
 
     bool operator== (const const_iterator& other) const {
@@ -332,10 +416,10 @@ struct const_iterator
 
 } // namespace detail
 
-template <typename Value, typename Compare = std::less<Value>>
+template <typename T, typename Compare = std::less<T>>
 class splaytree {
 public:
-    using key_type = Value;
+    using key_type = T;
     using key_compare = Compare;
     using value_type = key_type;
     using value_compare = key_compare;
@@ -419,33 +503,43 @@ public:
         return end();
     }
 
-    bool operator== (const splaytree<value_type>& other) const {
-        if (size() != other.size()) {
+    /* Requires our keys to be EqualityComparable. */
+    friend bool operator== (const splaytree<value_type, key_compare>& lhs,
+                            const splaytree<value_type, key_compare>& rhs) {
+        if (lhs.size() != rhs.size()) {
             return false;
         }
 
-        return std::equal(begin(), end(), other.begin());
+        return std::equal(lhs.begin(), lhs.end(), rhs.begin());
     }
 
-    bool operator!= (const splaytree<value_type>& other) const {
-        return !(*this == other);
+    /* Requires our keys to be EqualityComparable. */
+    friend bool operator!= (const splaytree<value_type, key_compare>& lhs,
+                            const splaytree<value_type, key_compare>& rhs) {
+        return !(lhs == rhs);
     }
 
-    bool operator< (const splaytree<value_type>& other) const {
+    friend bool operator< (const splaytree<value_type, key_compare>& lhs,
+                           const splaytree<value_type, key_compare>& rhs) {
+        /* TODO worry about comparison objects with state--i.e., what if every
+         * comparison generates side effects? */
         return std::lexicographical_compare(
-                begin(), end(), other.begin(), other.end());
+                lhs.begin(), lhs.end(), rhs.begin(), rhs.end(), lhs.m_comp);
     }
 
-    bool operator> (const splaytree<value_type>& other) const {
-        return other < *this;
+    friend bool operator> (const splaytree<value_type, key_compare>& lhs,
+                           const splaytree<value_type, key_compare>& rhs) {
+        return rhs < lhs;
     }
 
-    bool operator<= (const splaytree<value_type>& other) const {
-        return !(other < *this);
+    friend bool operator<= (const splaytree<value_type, key_compare>& lhs,
+                            const splaytree<value_type, key_compare>& rhs) {
+        return !(rhs < lhs);
     }
 
-    bool operator>= (const splaytree<value_type>& other) const {
-        return !(*this < other);
+    friend bool operator>= (const splaytree<value_type, key_compare>& lhs,
+                            const splaytree<value_type, key_compare>& rhs) {
+        return !(lhs < rhs);
     }
 
     splaytree& operator= (splaytree other) {
@@ -493,9 +587,9 @@ public:
         return std::make_pair(iterator(m_root), false);
     }
 
+    /* All hints are ignored. */
     template <typename... Args>
     iterator emplace_hint (const_iterator, Args&&... args) {
-        /* Ignore the hint for now. */
         return emplace(std::forward<Args>(args)...).first;
     }
 
@@ -515,13 +609,13 @@ public:
         return std::make_pair(iterator(m_root), false);
     }
 
+    /* All hints are ignored. */
     iterator insert (const_iterator, const value_type& value) {
-        /* Ignore the hint. */
         return insert(value).first;
     }
 
+    /* All hints are ignored. */
     iterator insert (const_iterator, value_type&& value) {
-        /* Ignore the hint. */
         return insert(value).first;
     }
 
@@ -537,29 +631,19 @@ public:
     }
 
     size_type erase (const value_type& value) {
-        size_type count = 0;
-        auto it = find(value);
-
-        /* Note that this allows equivalent keys, for the future. */
-        while (end() != it) {
-            erase(it);
-            ++count;
-            it = find(value);
-        }
-
+        auto range = equal_range(value);
+        size_type count = std::distance(range.first, range.second);
+        erase(range.first, range.second);
         return count;
     }
 
     iterator erase (const_iterator pos) {
         assert(pos.m_node);
 
-        auto ret = pos;
-        ++ret;
-
-        m_root = node_type::erase(pos.m_node);
+        m_root = node_type::erase(pos++.m_node);
         --m_size;
 
-        return ret;
+        return pos;
     }
 
     iterator erase (const_iterator first, const_iterator last) {
@@ -588,20 +672,23 @@ public:
 
     /* TODO provide a const find_no_splay() method */
 
-    // TODO
-#if 0
-    size_type count (const value_type& value);
+    size_type count (const value_type& value) const {
+        auto range = equal_range(value);
+        return std::distance(range.first, range.second);
+    }
 
-    iterator lower_bound (const value_type& value);
-    const_iterator lower_bound (const value_type& value) const;
+    const_iterator lower_bound (const value_type& value) const {
+        return const_iterator(node_type::lower_bound(m_root, value, m_comp));
+    }
 
-    iterator upper_bound (const value_type& value);
-    const_iterator upper_bound (const value_type& value) const;
+    const_iterator upper_bound (const value_type& value) const {
+        return const_iterator(node_type::upper_bound(m_root, value, m_comp));
+    }
 
-    std::pair<iterator, iterator> equal_range (const value_type& value);
     std::pair<const_iterator, const_iterator>
-    equal_range (const value_type& value) const;
-#endif
+    equal_range (const value_type& value) const {
+        return std::make_pair(lower_bound(value), upper_bound(value));
+    }
 
     /* DEBUG */
     void dump_structure () {
@@ -649,5 +736,35 @@ private:
     size_type m_size;
     node_type* m_root;
 };
+
+#if 0
+template <typename Key, typename T, typename Compare = std::less<Key>>
+class map {
+public:
+    using key_type = Key;
+    using mapped_type = T;
+    using value_type = std::pair<const Key, T>;
+
+    struct value_compare : std::binary_function<value_type, value_type, bool> {
+        friend class map<Key, T, Compare>;
+
+        bool operator() (const value_type& lhs, const value_type& rhs) const {
+            return m_comp(lhs.first, rhs.first);
+        }
+
+    protected:
+        value_compare (const Compare& comp = Compare())
+                : m_comp(comp) { }
+
+    private:
+        key_compare m_comp;
+    };
+
+private:
+    splaytree<element_type, wrapped_compare> m_tree;
+};
+#endif
+
+} // namespace splaytree
 
 #endif
