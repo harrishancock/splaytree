@@ -15,6 +15,10 @@
 #include <limits>
 
 namespace splaytree {
+
+template <typename Base>
+class splaytree;
+
 namespace detail {
 
 /* TODO separate the linkage (parent, left, right pointers) from the node
@@ -75,7 +79,7 @@ public:
     }
 
     template <typename Compare>
-    static node* search (node* s, const value_type& value, const Compare& comp) {
+    static node* search_no_splay (node* s, const value_type& value, const Compare& comp) {
         node* p = nullptr;
 
         while (s) {
@@ -95,8 +99,8 @@ public:
     }
 
     template <typename Compare>
-    static node* find (node* s, const value_type& value, const Compare& comp) {
-        s = search(s, value, comp);
+    static node* search (node* s, const value_type& value, const Compare& comp) {
+        s = search_no_splay(s, value, comp);
 
         if (s) {
             s->splay();
@@ -169,8 +173,8 @@ public:
     }
 
     template <typename Compare>
-    static node* lower_bound (node* s, const value_type& value, const Compare& comp) {
-        s = search(s, value, comp);
+    static node* lower_bound_no_splay (node* s, const value_type& value, const Compare& comp) {
+        s = search_no_splay(s, value, comp);
 
         if (!s) {
             return nullptr;
@@ -196,8 +200,19 @@ public:
     }
 
     template <typename Compare>
-    static node* upper_bound (node* s, const value_type& value, const Compare& comp) {
-        s = search(s, value, comp);
+    static node* lower_bound (node* s, const value_type& value, const Compare& comp) {
+        s = lower_bound_no_splay(s, value, comp);
+
+        if (s) {
+            s->splay();
+        }
+
+        return s;
+    }
+
+    template <typename Compare>
+    static node* upper_bound_no_splay (node* s, const value_type& value, const Compare& comp) {
+        s = search_no_splay(s, value, comp);
 
         if (!s) {
             return nullptr;
@@ -211,6 +226,17 @@ public:
          * until we find a node that is strictly greater. */
         while (s && !comp(value, s->value())) {
             s = increment(s);
+        }
+
+        return s;
+    }
+
+    template <typename Compare>
+    static node* upper_bound (node* s, const value_type& value, const Compare& comp) {
+        s = upper_bound_no_splay(s, value, comp);
+
+        if (s) {
+            s->splay();
         }
 
         return s;
@@ -352,41 +378,23 @@ private:
     std::pair<node*,node*> m_children;
 };
 
-/* const_iterator is the only iterator implemented, because a splaytree is a
- * model of a set: the key and the value are the same, and modifying the key
- * of an element of an associative container is stupid (without removing and
- * then reinserting the element). For example, take the following splaytree,
- * s, with elements stored in nondecreasing order:
- *    2
- *   /
- *  1
- * With a mutable iterator, the expression "*s.begin() = 3;" would be valid,
- * but it would put the tree into an invalid state:
- *    2
- *   /
- *  3
- * Best to avoid such horrors--if mutability is required, such as using a
- * splaytree to implement a map, the user can use const_cast. */
-template <typename T>
-struct const_iterator
-        : std::iterator<std::forward_iterator_tag,
-                typename std::add_const<T>::type> {
+template <typename T, typename Base>
+struct iterator_tpl : Base {
     using node_type = node<T>;
     
-    using base_type = std::iterator<std::forward_iterator_tag,
-          typename std::add_const<T>::type>;
+    using base_type = Base;
 
     using reference = typename base_type::reference;
     using pointer = typename base_type::pointer;
 
-    explicit const_iterator (node_type* node = nullptr)
+    explicit iterator_tpl (node_type* node = nullptr)
             : m_node(node) { }
 
-    bool operator== (const const_iterator& other) const {
+    bool operator== (const iterator_tpl& other) const {
         return m_node == other.m_node;
     }
 
-    bool operator!= (const const_iterator& other) const {
+    bool operator!= (const iterator_tpl& other) const {
         return m_node != other.m_node;
     }
 
@@ -398,13 +406,13 @@ struct const_iterator
         return &m_node->value();
     }
 
-    const_iterator& operator++ () {
+    iterator_tpl& operator++ () {
         m_node = node_type::increment(m_node);
         return *this;
     }
 
     /* Postfix */
-    const_iterator operator++ (int) {
+    iterator_tpl operator++ (int) {
         auto ret = *this;
         ++*this;
         return ret;
@@ -414,29 +422,98 @@ struct const_iterator
     node_type* m_node;
 };
 
-} // namespace detail
+template <typename T>
+using iterator = iterator_tpl<T, std::iterator<std::forward_iterator_tag, T>>;
+
+template <typename T>
+using const_iterator = iterator_tpl<T, std::iterator<std::forward_iterator_tag,
+      typename std::add_const<T>::type>>;
 
 template <typename T, typename Compare = std::less<T>>
-class splaytree {
-public:
+struct set_base {
     using key_type = T;
     using key_compare = Compare;
     using value_type = key_type;
     using value_compare = key_compare;
+
+    /* const_iterator is the only iterator implemented, because a splaytree is a
+     * model of a set: the key and the value are the same, and modifying the key
+     * of an element of an associative container is stupid (without removing and
+     * then reinserting the element). For example, take the following splaytree,
+     * s, with elements stored in nondecreasing order:
+     *    2
+     *   /
+     *  1
+     * With a mutable iterator, the expression "*s.begin() = 3;" would be valid,
+     * but it would put the tree into an invalid state:
+     *    2
+     *   /
+     *  3
+     * Best to avoid such horrors--if mutability is required, such as using a
+     * splaytree to implement a map, the user can use const_cast. */
+    using iterator = detail::const_iterator<value_type>;
+    using const_iterator = detail::const_iterator<value_type>;
+};
+
+template <typename Key, typename T, typename Compare = std::less<Key>>
+struct map_base {
+    using key_type = Key;
+    using key_compare = Compare;
+    using mapped_type = T;
+    using value_type = std::pair<typename std::add_const<Key>::type, T>;
+
+    struct value_compare : std::binary_function<value_type, value_type, bool> {
+        /* Allow splaytree, our derived class, to construct this object. */
+        friend class splaytree<map_base>;
+
+        bool operator() (const value_type& lhs, const value_type& rhs) const {
+            return m_comp(lhs.first, rhs.first);
+        }
+
+    protected:
+        /* This is abuse of the conversion operator, but it saves some
+         * metaprogramming down below to implement splaytree::key_comp(). */
+        explicit operator key_compare () const { return m_comp; }
+
+        explicit value_compare (const Compare& comp = Compare())
+                : m_comp(comp) { }
+
+    private:
+        key_compare m_comp;
+    };
+
+    /* A map can have mutable iterators, because they point to a
+     * std::pair<const Key, T>. That is, the key is still const, and only the
+     * mapped type may be changed. */
+    using iterator = detail::iterator<value_type>;
+    using const_iterator = detail::const_iterator<value_type>;
+};
+
+} // namespace detail
+
+template <typename Base>
+class splaytree : public Base {
+public:
+    using base_type = Base;
+
+    using key_type = typename base_type::key_type;
+    using key_compare = typename base_type::key_compare;
+    using value_type = typename base_type::value_type;
+    using value_compare = typename base_type::value_compare;
 
     using reference = value_type&;
     using const_reference = const value_type&;
 
     using node_type = detail::node<value_type>;
 
-    using iterator = detail::const_iterator<value_type>;
-    using const_iterator = detail::const_iterator<value_type>;
+    using iterator = typename base_type::iterator;
+    using const_iterator = typename base_type::const_iterator;
 
     using difference_type = ptrdiff_t;
     using size_type = size_t;
 
     /* Default constructor */
-    explicit splaytree (const value_compare& comp = value_compare())
+    explicit splaytree (const key_compare& comp = key_compare())
             : m_comp(comp)
             , m_size(0)
             , m_root(nullptr) { }
@@ -444,7 +521,7 @@ public:
     /* Copy constructor */
     /* TODO think about exception safety here */
     splaytree (const splaytree& other)
-            : splaytree(other.begin(), other.end(), other.value_comp()) { }
+            : splaytree(other.begin(), other.end(), other.key_comp()) { }
 
     /* Move constructor */
     splaytree (splaytree&& other) : splaytree() {
@@ -453,14 +530,14 @@ public:
     }
 
     template <typename Iter>
-    splaytree (Iter first, Iter last, const value_compare& comp = value_compare())
+    splaytree (Iter first, Iter last, const key_compare& comp = key_compare())
             : splaytree(comp) {
         /* TODO think about exception safety here */
         insert(first, last);
     }
 
     splaytree (std::initializer_list<value_type> ilist,
-               const value_compare& comp = value_compare())
+               const key_compare& comp = key_compare())
             : splaytree(ilist.begin(), ilist.end(), comp) { }
 
     ~splaytree () {
@@ -504,8 +581,8 @@ public:
     }
 
     /* Requires our keys to be EqualityComparable. */
-    friend bool operator== (const splaytree<value_type, key_compare>& lhs,
-                            const splaytree<value_type, key_compare>& rhs) {
+    friend bool operator== (const splaytree& lhs,
+                            const splaytree& rhs) {
         if (lhs.size() != rhs.size()) {
             return false;
         }
@@ -514,31 +591,31 @@ public:
     }
 
     /* Requires our keys to be EqualityComparable. */
-    friend bool operator!= (const splaytree<value_type, key_compare>& lhs,
-                            const splaytree<value_type, key_compare>& rhs) {
+    friend bool operator!= (const splaytree& lhs,
+                            const splaytree& rhs) {
         return !(lhs == rhs);
     }
 
-    friend bool operator< (const splaytree<value_type, key_compare>& lhs,
-                           const splaytree<value_type, key_compare>& rhs) {
+    friend bool operator< (const splaytree& lhs,
+                           const splaytree& rhs) {
         /* TODO worry about comparison objects with state--i.e., what if every
          * comparison generates side effects? */
         return std::lexicographical_compare(
                 lhs.begin(), lhs.end(), rhs.begin(), rhs.end(), lhs.m_comp);
     }
 
-    friend bool operator> (const splaytree<value_type, key_compare>& lhs,
-                           const splaytree<value_type, key_compare>& rhs) {
+    friend bool operator> (const splaytree& lhs,
+                           const splaytree& rhs) {
         return rhs < lhs;
     }
 
-    friend bool operator<= (const splaytree<value_type, key_compare>& lhs,
-                            const splaytree<value_type, key_compare>& rhs) {
+    friend bool operator<= (const splaytree& lhs,
+                            const splaytree& rhs) {
         return !(rhs < lhs);
     }
 
-    friend bool operator>= (const splaytree<value_type, key_compare>& lhs,
-                            const splaytree<value_type, key_compare>& rhs) {
+    friend bool operator>= (const splaytree& lhs,
+                            const splaytree& rhs) {
         return !(lhs < rhs);
     }
 
@@ -567,7 +644,7 @@ public:
     }
 
     key_compare key_comp () const {
-        return m_comp;
+        return static_cast<key_compare>(m_comp);
     }
 
     value_compare value_comp () const {
@@ -608,21 +685,6 @@ public:
         }
         return std::make_pair(iterator(m_root), false);
     }
-
-#if 0
-    /* Insert at upper bound. */
-    iterator insert_eq (const value_type& value) {
-        find(value);
-        auto newroot = new node_type(value);
-        return insert_aux(newroot);
-    }
-
-    iterator insert_eq (value_type&& value) {
-        find(value);
-        auto newroot = new node_type(std::forward<value_type>(value));
-        return insert_aux(newroot);
-    }
-#endif
 
     /* All hints are ignored. */
     iterator insert (const_iterator, const value_type& value) {
@@ -674,8 +736,8 @@ public:
         m_size = 0;
     }
 
-    iterator find (const value_type& value) {
-        m_root = node_type::find(m_root, value, m_comp);
+    iterator find (const key_type& key) {
+        m_root = node_type::search(m_root, value, m_comp);
 
         if (!m_root || m_comp(value, m_root->value()) || m_comp(m_root->value(), value)) {
             /* Not found. */
@@ -685,24 +747,54 @@ public:
         return iterator(m_root);
     }
 
-    /* TODO provide a const find_no_splay() method */
+    size_type count (const value_type& value) {
+        auto range = equal_range(value);
+        return std::distance(range.first, range.second);
+    }
+
+    std::pair<iterator, iterator>
+    equal_range (const value_type& value) {
+        return std::make_pair(lower_bound(value), upper_bound(value));
+    }
+
+    iterator lower_bound (const value_type& value) {
+        auto bound = node_type::lower_bound(m_root, value, m_comp);
+        
+        if (!bound) {
+            return iterator(nullptr);
+        }
+
+        m_root = bound;
+        return iterator(bound);
+    }
+
+    iterator upper_bound (const value_type& value) {
+        auto bound = node_type::upper_bound(m_root, value, m_comp);
+
+        if (!bound) {
+            return iterator(nullptr);
+        }
+
+        m_root = bound;
+        return iterator(bound);
+    }
 
     size_type count (const value_type& value) const {
         auto range = equal_range(value);
         return std::distance(range.first, range.second);
     }
 
-    const_iterator lower_bound (const value_type& value) const {
-        return const_iterator(node_type::lower_bound(m_root, value, m_comp));
-    }
-
-    const_iterator upper_bound (const value_type& value) const {
-        return const_iterator(node_type::upper_bound(m_root, value, m_comp));
-    }
-
     std::pair<const_iterator, const_iterator>
     equal_range (const value_type& value) const {
         return std::make_pair(lower_bound(value), upper_bound(value));
+    }
+
+    const_iterator lower_bound (const value_type& value) const {
+        return const_iterator(node_type::lower_bound_no_splay(m_root, value, m_comp));
+    }
+
+    const_iterator upper_bound (const value_type& value) const {
+        return const_iterator(node_type::upper_bound_no_splay(m_root, value, m_comp));
     }
 
     /* DEBUG */
@@ -752,33 +844,11 @@ private:
     node_type* m_root;
 };
 
-#if 0
+template <typename T, typename Compare = std::less<T>>
+using set = splaytree<detail::set_base<T, Compare>>;
+
 template <typename Key, typename T, typename Compare = std::less<Key>>
-class map {
-public:
-    using key_type = Key;
-    using mapped_type = T;
-    using value_type = std::pair<const Key, T>;
-
-    struct value_compare : std::binary_function<value_type, value_type, bool> {
-        friend class map<Key, T, Compare>;
-
-        bool operator() (const value_type& lhs, const value_type& rhs) const {
-            return m_comp(lhs.first, rhs.first);
-        }
-
-    protected:
-        value_compare (const Compare& comp = Compare())
-                : m_comp(comp) { }
-
-    private:
-        key_compare m_comp;
-    };
-
-private:
-    splaytree<element_type, wrapped_compare> m_tree;
-};
-#endif
+using map = splaytree<detail::map_base<Key, T, Compare>>;
 
 } // namespace splaytree
 

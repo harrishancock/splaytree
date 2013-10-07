@@ -12,7 +12,7 @@ int main () {
     }
     std::random_shuffle(v.begin(), v.end());
 
-    splaytree::splaytree<int> st { v.begin(), v.end() };
+    splaytree::set<int> st { v.begin(), v.end() };
 
     assert(!st.insert(30).second);
 
@@ -28,12 +28,11 @@ int main () {
 
     printf("\n");
 
-    printf("Printing range [55,100]\n");
-    for (auto cit = st.lower_bound(55); cit != st.upper_bound(100); ++cit) {
+    printf("Printing range [50,100]\n");
+    for (auto cit = st.lower_bound(50); cit != st.upper_bound(100); ++cit) {
         printf("%d\n", *cit);
     }
 
-    printf("erasing 53\n");
     assert(1 == st.erase(53));
 
     printf("Printing range [50,55)\n");
@@ -87,7 +86,7 @@ int main () {
         printf("%d\n", i);
     }
 
-    splaytree::splaytree<int> st2 = {
+    splaytree::set<int> st2 = {
         123, 456, 789
     };
 
@@ -98,5 +97,27 @@ int main () {
     assert(!st2.empty());
     st2.clear();
     assert(st2.empty());
+
+    splaytree::map<std::string, int> sm;
+
+    auto result = sm.insert(std::make_pair(std::string("zero"), 0));
+    assert(result.second);
+
+    sm.insert(std::make_pair(std::string("one"), 1));
+    sm.insert(std::make_pair(std::string("two"), 2));
+    sm.insert(std::make_pair(std::string("three"), 3));
+    sm.insert(std::make_pair(std::string("four"), 4));
+    sm.insert(std::make_pair(std::string("five"), 5));
+    sm.insert(std::make_pair(std::string("six"), 6));
+
+    for (auto& pr : sm) {
+        std::cout << pr.first << " : " << pr.second << '\n';
+    }
+
+    sm.erase(sm.lower_bound(std::string("four")), sm.lower_bound(std::string("two")));
+    printf("\n");
+    for (auto& pr : sm) {
+        std::cout << pr.first << " : " << pr.second << '\n';
+    }
 
 }
