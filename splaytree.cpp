@@ -110,14 +110,38 @@ int main () {
     sm.insert(std::make_pair(std::string("five"), 5));
     sm.insert(std::make_pair(std::string("six"), 6));
 
+    sm["_hello"] = 654;
+    sm["_world"] = 37;
+
+    printf("sm.at(\"_hello\") == %d\n", sm.at("_hello"));
+
+    try {
+        sm.at("fart");
+    }
+    catch (std::out_of_range& exc) {
+        printf("exception: %s\n", exc.what());
+    }
+
     for (auto& pr : sm) {
         std::cout << pr.first << " : " << pr.second << '\n';
     }
 
+    printf("erasing [\"four\",\"two\")\n");
     sm.erase(sm.lower_bound(std::string("four")), sm.lower_bound(std::string("two")));
-    printf("\n");
     for (auto& pr : sm) {
         std::cout << pr.first << " : " << pr.second << '\n';
     }
 
+    {
+        splaytree::map<std::pair<int, std::string>, int> sm2;
+        sm2[std::make_pair(3, std::string("aaa"))] = 3;
+        sm2[std::make_pair(1, std::string("aaa"))] = 1;
+        sm2[std::make_pair(2, std::string("aaa"))] = 2;
+        sm2[std::make_pair(0, std::string("aaa"))] = 0;
+        sm2[std::make_pair(4, std::string("aaa"))] = 4;
+
+        for (auto& pair : sm2) {
+            printf("(%d, %s) : %d\n", pair.first.first, pair.first.second.c_str(), pair.second);
+        }
+    }
 }

@@ -5,6 +5,8 @@
 #define SPLAYTREE_HPP
 
 #include <iostream>
+#include <type_traits>
+#include <stdexcept>
 
 #include <cassert>
 #include <cstddef>
@@ -379,6 +381,16 @@ private:
 };
 
 template <typename T, typename Base>
+struct iterator_tpl;
+
+template <typename T>
+using iterator = iterator_tpl<T, std::iterator<std::forward_iterator_tag, T>>;
+
+template <typename T>
+using const_iterator = iterator_tpl<T, std::iterator<std::forward_iterator_tag,
+      typename std::add_const<T>::type>>;
+
+template <typename T, typename Base>
 struct iterator_tpl : Base {
     using node_type = node<T>;
     
@@ -389,6 +401,8 @@ struct iterator_tpl : Base {
 
     explicit iterator_tpl (node_type* node = nullptr)
             : m_node(node) { }
+
+    iterator_tpl (const iterator<T>& other) : m_node(other.m_node) { }
 
     bool operator== (const iterator_tpl& other) const {
         return m_node == other.m_node;
@@ -422,79 +436,130 @@ struct iterator_tpl : Base {
     node_type* m_node;
 };
 
-template <typename T>
-using iterator = iterator_tpl<T, std::iterator<std::forward_iterator_tag, T>>;
-
-template <typename T>
-using const_iterator = iterator_tpl<T, std::iterator<std::forward_iterator_tag,
-      typename std::add_const<T>::type>>;
-
 template <typename T, typename Compare = std::less<T>>
 struct set_base {
-    using key_type = T;
-    using key_compare = Compare;
-    using value_type = key_type;
-    using value_compare = key_compare;
+    /* Derived is not actually used for set's base class. */
+    template <typename Derived>
+    struct base {
+        using key_type = T;
+        using key_compare = Compare;
+        using value_type = key_type;
+        using value_compare = key_compare;
 
-    /* const_iterator is the only iterator implemented, because a splaytree is a
-     * model of a set: the key and the value are the same, and modifying the key
-     * of an element of an associative container is stupid (without removing and
-     * then reinserting the element). For example, take the following splaytree,
-     * s, with elements stored in nondecreasing order:
-     *    2
-     *   /
-     *  1
-     * With a mutable iterator, the expression "*s.begin() = 3;" would be valid,
-     * but it would put the tree into an invalid state:
-     *    2
-     *   /
-     *  3
-     * Best to avoid such horrors--if mutability is required, such as using a
-     * splaytree to implement a map, the user can use const_cast. */
-    using iterator = detail::const_iterator<value_type>;
-    using const_iterator = detail::const_iterator<value_type>;
+        /* const_iterator is the only iterator implemented, because a splaytree is a
+         * model of a set: the key and the value are the same, and modifying the key
+         * of an element of an associative container is stupid (without removing and
+         * then reinserting the element). For example, take the following splaytree,
+         * s, with elements stored in nondecreasing order:
+         *    2
+         *   /
+         *  1
+         * With a mutable iterator, the expression "*s.begin() = 3;" would be valid,
+         * but it would put the tree into an invalid state:
+         *    2
+         *   /
+         *  3
+         * Best to avoid such horrors--if mutability is required, such as using a
+         * splaytree to implement a map, the user can use const_cast. */
+        using iterator = detail::const_iterator<value_type>;
+        using const_iterator = detail::const_iterator<value_type>;
+
+    protected:
+        value_type make_value (const key_type& key) const { return key; }
+        value_type make_value (key_type&& key) const { return std::forward<key_type>(key); }
+    };
 };
 
 template <typename Key, typename T, typename Compare = std::less<Key>>
 struct map_base {
-    using key_type = Key;
-    using key_compare = Compare;
-    using mapped_type = T;
-    using value_type = std::pair<typename std::add_const<Key>::type, T>;
+    template <typename Derived>
+    struct base {
+        using key_type = Key;
+        using key_compare = Compare;
+        using mapped_type = T;
+        using value_type = std::pair<typename std::add_const<Key>::type, T>;
 
-    struct value_compare : std::binary_function<value_type, value_type, bool> {
-        /* Allow splaytree, our derived class, to construct this object. */
-        friend class splaytree<map_base>;
+        struct value_compare : std::binary_function<value_type, value_type, bool> {
+            /* Allow splaytree, our derived class, to construct this object. */
+            friend class splaytree<map_base>;
 
-        bool operator() (const value_type& lhs, const value_type& rhs) const {
-            return m_comp(lhs.first, rhs.first);
+            bool operator() (const value_type& lhs, const value_type& rhs) const {
+                return m_comp(lhs.first, rhs.first);
+            }
+
+        protected:
+            /* This is abuse of the conversion operator, but it saves some
+             * metaprogramming down below to implement splaytree::key_comp(). */
+            explicit operator key_compare () const { return m_comp; }
+
+            explicit value_compare (const Compare& comp = Compare())
+                    : m_comp(comp) { }
+
+        private:
+            key_compare m_comp;
+        };
+
+        /* A map can have mutable iterators, because they point to a
+         * std::pair<const Key, T>. That is, the key is still const, and only the
+         * mapped type may be changed. */
+        using iterator = detail::iterator<value_type>;
+        using const_iterator = detail::const_iterator<value_type>;
+
+        mapped_type& at (const key_type& key) {
+            auto self = static_cast<Derived*>(this);
+
+            auto elem = self->find(key);
+            if (self->end() == elem) {
+                throw std::out_of_range("element not in tree");
+            }
+            return elem->second;
+        }
+
+        /* No const version of at(), because it relies on find(), which is
+         * non-const. */
+
+        mapped_type& operator[] (const key_type& key) {
+            auto self = static_cast<Derived*>(this);
+
+            auto elem = self->find(key);
+            if (self->end() == elem) {
+                bool success;
+                std::tie(elem, success) = self->insert(make_value(key));
+                assert(success);
+            }
+            return elem->second;
+        }
+
+        mapped_type& operator[] (key_type&& key) {
+            auto self = static_cast<Derived*>(this);
+
+            auto elem = self->find(key);
+            if (self->end() == elem) {
+                bool success;
+                std::tie(elem, success)
+                    = self->insert(make_value(std::forward<key_type>(key)));
+                assert(success);
+            }
+            return elem->second;
         }
 
     protected:
-        /* This is abuse of the conversion operator, but it saves some
-         * metaprogramming down below to implement splaytree::key_comp(). */
-        explicit operator key_compare () const { return m_comp; }
+        value_type make_value (const key_type& key) const {
+            return std::make_pair(key, mapped_type());
+        }
 
-        explicit value_compare (const Compare& comp = Compare())
-                : m_comp(comp) { }
-
-    private:
-        key_compare m_comp;
+        value_type make_value (key_type&& key) const {
+            return std::make_pair(std::forward<key_type>(key), mapped_type());
+        }
     };
-
-    /* A map can have mutable iterators, because they point to a
-     * std::pair<const Key, T>. That is, the key is still const, and only the
-     * mapped type may be changed. */
-    using iterator = detail::iterator<value_type>;
-    using const_iterator = detail::const_iterator<value_type>;
 };
 
 } // namespace detail
 
 template <typename Base>
-class splaytree : public Base {
+class splaytree : public Base::template base<splaytree<Base>> {
 public:
-    using base_type = Base;
+    using base_type = typename Base::template base<splaytree>;
 
     using key_type = typename base_type::key_type;
     using key_compare = typename base_type::key_compare;
@@ -656,7 +721,7 @@ public:
         /* TODO I'll have to study how other people implement emplace() for
          * their data structures--this feels flawed. */
         auto newroot = new node_type (std::forward<Args>(args)...);
-        if (end() == find(newroot->value())) {
+        if (end() == find_value(newroot->value())) {
             return insert_aux(newroot);
         }
         delete newroot;
@@ -671,7 +736,7 @@ public:
     }
 
     std::pair<iterator, bool> insert (const value_type& value) {
-        if (end() == find(value)) {
+        if (end() == find_value(value)) {
             auto newroot = new node_type(value);
             return insert_aux(newroot);
         }
@@ -679,7 +744,7 @@ public:
     }
 
     std::pair<iterator, bool> insert (value_type&& value) {
-        if (end() == find(value)) {
+        if (end() == find_value(value)) {
             auto newroot = new node_type(std::forward<value_type>(value));
             return insert_aux(newroot);
         }
@@ -720,14 +785,14 @@ public:
         m_root = node_type::erase(pos++.m_node);
         --m_size;
 
-        return pos;
+        return iterator(pos.m_node);
     }
 
     iterator erase (const_iterator first, const_iterator last) {
         while (first != last) {
             first = erase(first);
         }
-        return last;
+        return iterator(last.m_node);
     }
     
     void clear () {
@@ -737,27 +802,25 @@ public:
     }
 
     iterator find (const key_type& key) {
-        m_root = node_type::search(m_root, value, m_comp);
-
-        if (!m_root || m_comp(value, m_root->value()) || m_comp(m_root->value(), value)) {
-            /* Not found. */
-            return iterator(nullptr);
-        }
-
-        return iterator(m_root);
+        return find_value(base_type::make_value(key));
     }
 
-    size_type count (const value_type& value) {
+    size_type count (const key_type& key) {
+        auto value = base_type::make_value(key);
+
         auto range = equal_range(value);
         return std::distance(range.first, range.second);
     }
 
     std::pair<iterator, iterator>
-    equal_range (const value_type& value) {
+    equal_range (const key_type& key) {
+        auto value = base_type::make_value(key);
         return std::make_pair(lower_bound(value), upper_bound(value));
     }
 
-    iterator lower_bound (const value_type& value) {
+    iterator lower_bound (const key_type& key) {
+        auto value = base_type::make_value(key);
+
         auto bound = node_type::lower_bound(m_root, value, m_comp);
         
         if (!bound) {
@@ -768,7 +831,9 @@ public:
         return iterator(bound);
     }
 
-    iterator upper_bound (const value_type& value) {
+    iterator upper_bound (const key_type& key) {
+        auto value = base_type::make_value(key);
+
         auto bound = node_type::upper_bound(m_root, value, m_comp);
 
         if (!bound) {
@@ -779,21 +844,25 @@ public:
         return iterator(bound);
     }
 
-    size_type count (const value_type& value) const {
+    size_type count (const key_type& key) const {
+        auto value = base_type::make_value(key);
         auto range = equal_range(value);
         return std::distance(range.first, range.second);
     }
 
     std::pair<const_iterator, const_iterator>
-    equal_range (const value_type& value) const {
+    equal_range (const key_type& key) const {
+        auto value = base_type::make_value(key);
         return std::make_pair(lower_bound(value), upper_bound(value));
     }
 
-    const_iterator lower_bound (const value_type& value) const {
+    const_iterator lower_bound (const key_type& key) const {
+        auto value = base_type::make_value(key);
         return const_iterator(node_type::lower_bound_no_splay(m_root, value, m_comp));
     }
 
-    const_iterator upper_bound (const value_type& value) const {
+    const_iterator upper_bound (const key_type& key) const {
+        auto value = base_type::make_value(key);
         return const_iterator(node_type::upper_bound_no_splay(m_root, value, m_comp));
     }
 
@@ -837,6 +906,17 @@ private:
         ++m_size;
 
         return std::make_pair(iterator(m_root), true);
+    }
+
+    iterator find_value (const value_type& value) {
+        m_root = node_type::search(m_root, value, m_comp);
+
+        if (!m_root || m_comp(value, m_root->value()) || m_comp(m_root->value(), value)) {
+            /* Not found. */
+            return iterator(nullptr);
+        }
+
+        return iterator(m_root);
     }
 
     value_compare m_comp;
