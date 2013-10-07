@@ -609,6 +609,21 @@ public:
         return std::make_pair(iterator(m_root), false);
     }
 
+#if 0
+    /* Insert at upper bound. */
+    iterator insert_eq (const value_type& value) {
+        find(value);
+        auto newroot = new node_type(value);
+        return insert_aux(newroot);
+    }
+
+    iterator insert_eq (value_type&& value) {
+        find(value);
+        auto newroot = new node_type(std::forward<value_type>(value));
+        return insert_aux(newroot);
+    }
+#endif
+
     /* All hints are ignored. */
     iterator insert (const_iterator, const value_type& value) {
         return insert(value).first;
