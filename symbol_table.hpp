@@ -74,6 +74,8 @@ public:
      * was previously open, if any. No symbols are erased from the symbol
      * table. */
     void close_scope () {
+        assert(!m_active_scopes.empty());
+
         m_active_scopes.pop_front();
     }
 
@@ -104,6 +106,8 @@ public:
      * previously existing element, and a boolean signifying whether or not
      * an insertion actually took place (true == insertion succeeded). */
     std::pair<iterator, bool> insert (const identifier& id) {
+        assert(!m_active_scopes.empty());
+
         auto key = std::make_pair(m_active_scopes.front(), id);
         auto value = std::make_pair(key, id_record());
         return m_symbol_table.insert(value);
