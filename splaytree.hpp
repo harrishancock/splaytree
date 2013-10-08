@@ -4,10 +4,6 @@
 #ifndef SPLAYTREE_HPP
 #define SPLAYTREE_HPP
 
-#include <iostream>
-#include <type_traits>
-#include <stdexcept>
-
 #include <cassert>
 #include <cstddef>
 
@@ -15,6 +11,11 @@
 #include <initializer_list>
 #include <iterator>
 #include <limits>
+#include <type_traits>
+#include <stdexcept>
+
+/* iostream is only included for debugging purposes, for now */
+#include <iostream>
 
 namespace splaytree {
 
