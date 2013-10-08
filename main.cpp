@@ -11,10 +11,10 @@
  * (documented later) with identifiers from an input file. The input file
  * format is a whitespace-delimited sequence of open-scope, close-scope, and
  * identifier lexemes. An open-scope lexeme is "{". A close-scope lexeme is
- * "}". An identifier lexeme is any string of printable, non-whitespace,
- * non-curly-brace characters. No syntax checking on the number or order of
- * open- and close-scope lexemes is done; however, the normal rules should be
- * observed or this test program is not guaranteed to work.
+ * "}". An identifier lexeme is any string of printable, non-whitespace
+ * characters. No syntax checking on the number or order of open- and close-
+ * scope lexemes is done; however, the normal rules should be observed or this
+ * test program is not guaranteed to work.
  *
  * Test files can be specified as an argument on the command line, or entered
  * on standard input. Usage of this program is therefore one of the two:
@@ -50,8 +50,10 @@ int main (int argc, char** argv) try {
 
     if (argc > 1) {
         /* Use the file whose name was passed on the command line. */
+        std::cout << "Reading " << argv[1] << '\n';
         std::ifstream input { argv[1] };
         test_symtab(symtab, input);
+        input.close();
     }
     else {
         /* Use stdin. */
@@ -59,6 +61,7 @@ int main (int argc, char** argv) try {
     }
 
     symtab.display();
+    std::cout << '\n';
     return 0;
 }
 catch (std::exception& exc) {

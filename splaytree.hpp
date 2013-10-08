@@ -21,10 +21,23 @@
  * curious how performant this container will turn out to be when it gets
  * loaded down.
  *
- * As in symbol_table.hpp, some implementation will be abbreviated for
- * clarity (we don't need to implement std::map's relational operators, for
- * example, because we don't need to compare splaytrees in this simple test
- * program.
+ * Unlike symbol_table.hpp, I did not omit parts of the implementation for
+ * clarity in this file. The reason for this is because many parts of the
+ * implementation are interconnected with others, and also because removing
+ * some parts but not others results in a source file that doesn't make much
+ * sense. For example, the test program for this assignment only uses one
+ * insert() method, so I could get rid of all the others. However, since the
+ * splaytree template holds resources, it needs a destructor, and since it has
+ * a destructor, it needs a copy constructor (by the "Rule of Five"). The copy
+ * constructor has to be able to insert the other object's elements, which
+ * means I actually do need a two-argument, range-based insert() method.
+ * Navigating through all such dependencies in the interface such that the end
+ * result is a stripped-down version that only provides the features required
+ * for this current assignment, AND still makes some sort of sense to a C++
+ * programmer reading the code seems like a lot of effort for little gain. You
+ * should be able to safely skim the code in this file: it implements a splay
+ * tree, it implements a std::map-like interface, and the test driver for the
+ * symbol table assignment works fine.
  *
  * Since this is a templated container, its implementation is header-only.
  * Some work could be offloaded into a separate .cpp file, particularly from
@@ -565,9 +578,9 @@ struct set_base {
     protected:
         /* In a set, the key and the value are one and the same, so making a
          * default value from a key is as simple as returning the key. */
-        value_type make_value (const key_type& key) const { return key; }
+        static value_type make_value (const key_type& key) { return key; }
 
-        value_type make_value (key_type&& key) const {
+        static value_type make_value (key_type&& key) {
             return std::forward<key_type>(key);
         }
     };
@@ -665,11 +678,11 @@ struct map_base {
         }
 
     protected:
-        value_type make_value (const key_type& key) const {
+        static value_type make_value (const key_type& key) {
             return std::make_pair(key, mapped_type());
         }
 
-        value_type make_value (key_type&& key) const {
+        static value_type make_value (key_type&& key) {
             return std::make_pair(std::forward<key_type>(key), mapped_type());
         }
     };
