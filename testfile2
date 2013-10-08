@@ -1,0 +1,6 @@
+{ a  A  b  B
+       {   }
+       { a  A }
+       { b  B  c }
+       {  }
+     a  A  c  C  }
