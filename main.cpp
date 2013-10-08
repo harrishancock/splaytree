@@ -34,8 +34,8 @@
 
 #include <cassert>
 
-#include <iostream>
 #include <fstream>
+#include <iostream>
 
 const std::string open_scope_lexeme { "{" };
 const std::string close_scope_lexeme { "}" };

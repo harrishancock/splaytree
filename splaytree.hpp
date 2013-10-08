@@ -1,5 +1,47 @@
-/* CS 4110
- * Author: Harris Hancock */
+/*
+ * California State University East Bay
+ * CS4110 - Compiler Design
+ * Author: Harris Hancock (hhancock 'at' horizon)
+ *
+ * Symbol Table Assignment (8 October 2013)
+ *
+ * splaytree.hpp
+ *
+ * Implementation of a splay tree data structure. A splay tree is a type of
+ * self-adjusting binary search tree. The salient feature with regards to its
+ * use as a symbol table is that it exhibits a natural caching tendency: the
+ * most often accessed elements stay close to the top of the tree. For a
+ * better overview, see the Wikipedia article on splay trees, or the original
+ * paper by Sleator and Tarjan:
+ * http://www.cs.cmu.edu/~sleator/papers/self-adjusting.pdf
+ *
+ * I chose to implement my own data structure for the symbol table because it
+ * sounded like more fun than just using std::unordered_map. I chose to
+ * implement a tree specifically instead of a hash table on a whim; I am
+ * curious how performant this container will turn out to be when it gets
+ * loaded down.
+ *
+ * As in symbol_table.hpp, some implementation will be abbreviated for
+ * clarity (we don't need to implement std::map's relational operators, for
+ * example, because we don't need to compare splaytrees in this simple test
+ * program.
+ *
+ * Since this is a templated container, its implementation is header-only.
+ * Some work could be offloaded into a separate .cpp file, particularly from
+ * the node class--I'll get to this when I have time. Additionally, I should
+ * point out that I wanted to support both a std::set-like interface and a
+ * std::map-like interface using the same underlying tree implementation. I
+ * jumped through some hoops to do this with a minimum of code duplication.
+ * This is what the set_base and map_base templates are all about. I fear that
+ * this negatively impacted the readability of the code somewhat.
+ *
+ * I use some conventions for short identifier names. In binary functions, lhs
+ * and rhs signify left-hand-side, and right-hand-side, respectively. In the
+ * lowest levels of the tree implementation, I use the identifiers s and p
+ * gratuitously. s usually means self, or start, and is the node that the
+ * routine is currently considering. p means pointer, and is just used to save
+ * a node pointer for later use.
+ */
 
 #ifndef SPLAYTREE_HPP
 #define SPLAYTREE_HPP
@@ -11,10 +53,10 @@
 #include <initializer_list>
 #include <iterator>
 #include <limits>
-#include <type_traits>
 #include <stdexcept>
+#include <type_traits>
 
-/* iostream is only included for debugging purposes, for now */
+/* iostream is only included for debugging (splaytree::dump_structure()) */
 #include <iostream>
 
 namespace splaytree {
@@ -24,10 +66,23 @@ class splaytree;
 
 namespace detail {
 
-/* TODO separate the linkage (parent, left, right pointers) from the node
+//////////////////////////////////////////////////////////////////////////////
+
+/* A node in a splaytree. This class has two levels of implementation:
+ * operations on a single node, such as attach, rotate, and splay; and
+ * operations on the tree as a whole, such as search, erase, increment, and
+ * lower_bound. In general, the former operations are implemented as member
+ * functions of node, while the latter are implemented as static member
+ * functions that operate on pointers to node.
+ *
+ * The template parameter, T, is the user-specified value type stored in every
+ * node of the tree.
+ *
+ * TODO separate the linkage (parent, left, right pointers) from the node
  * class and put it in a separate node_base class, from which node derives.
  * Implement as many tree operations as possible in terms of this node_base
- * class (i.e., not in a header file). */
+ * class (i.e., not in a header file). This will also be necessary in order to
+ * support bidirectional iteration. */
 template <typename T>
 class node {
 public:
@@ -47,8 +102,8 @@ public:
 
     /* Attach a child. We must not already have a child in that position,
      * and it must must not already have a parent. */
-    void attach_left (node* lhs) { attach<LEFT>(lhs); }
-    void attach_right (node* rhs) { attach<RIGHT>(rhs); }
+    void attach_left (node* other) { attach<LEFT>(other); }
+    void attach_right (node* other) { attach<RIGHT>(other); }
 
     /* Detach a left child and return it. Returns nullptr if there is no left
      * child. */
@@ -67,6 +122,8 @@ public:
         return m_parent && m_parent->left() == this;
     }
 
+    /* Return a pointer to the smallest value in the tree s. Does NOT modify
+     * the tree. */
     static node* minimum (node* s) {
         if (s) while (s->left()) {
             s = s->left();
@@ -74,6 +131,8 @@ public:
         return s;
     }
 
+    /* Return a pointer to the largest value in the tree s. Does NOT modify
+     * the tree. */
     static node* maximum (node* s) {
         if (s) while (s->right()) {
             s = s->right();
@@ -81,6 +140,10 @@ public:
         return s;
     }
 
+    /* Descend the tree s, searching for the given value with the given
+     * comparison function. Return a pointer to the found element, or the node
+     * to which the value in question would have been attached, if not found.
+     * Does NOT modify the tree. */
     template <typename Compare>
     static node* search_no_splay (node* s, const value_type& value, const Compare& comp) {
         node* p = nullptr;
@@ -101,6 +164,8 @@ public:
         return p;
     }
 
+    /* Same as search_no_splay, except the return value is also the new root
+     * of the tree. DOES modify the tree. */
     template <typename Compare>
     static node* search (node* s, const value_type& value, const Compare& comp) {
         s = search_no_splay(s, value, comp);
@@ -112,6 +177,9 @@ public:
         return s;
     }
 
+    /* Join two roots into a single tree. The new root will be the largest
+     * element in the left-hand tree. If the left-hand tree is null, the new
+     * root will be the right-hand tree. */
     static node* join (node* lhs, node* rhs) {
         if (!lhs) {
             return rhs;
@@ -131,6 +199,8 @@ public:
         return root;
     }
 
+    /* Remove and delete the given node from its tree. Return a pointer to the
+     * new root of the tree. DOES modify the tree. */
     static node* erase (node* s) {
         assert(s);
         s->splay();
@@ -141,6 +211,8 @@ public:
         return join(lhs, rhs);
     }
 
+    /* Traverse the tree to the next node, in-order. Does NOT modify the tree.
+     * FIXME some code duplication with decrement() here. */
     static node* increment (node* s) {
         if (!s) {
             return nullptr;
@@ -159,6 +231,8 @@ public:
         return s->m_parent;
     }
 
+    /* Traverse the tree to the previous node, in-order. Does NOT modify the
+     * tree. */
     static node* decrement (node* s) {
         if (!s) {
             return nullptr;
@@ -168,6 +242,8 @@ public:
             return maximum(s->left());
         }
 
+        /* Climb up the tree as long as s is a left child. In other words:
+         * stop when s is a right child OR the root. */
         while (s->m_parent && s->is_left_child()) {
             s = s->m_parent;
         }
@@ -175,6 +251,8 @@ public:
         return s->m_parent;
     }
 
+    /* Return a pointer to the smallest node whose key is greater than or
+     * equal to the given value. Does NOT modify the tree. */
     template <typename Compare>
     static node* lower_bound_no_splay (node* s, const value_type& value, const Compare& comp) {
         s = search_no_splay(s, value, comp);
@@ -202,6 +280,8 @@ public:
         return s;
     }
 
+    /* Same as lower_bound_no_splay, except the return value is also the new
+     * root of the tree. DOES modify the tree. */
     template <typename Compare>
     static node* lower_bound (node* s, const value_type& value, const Compare& comp) {
         s = lower_bound_no_splay(s, value, comp);
@@ -213,6 +293,8 @@ public:
         return s;
     }
 
+    /* Return a pointer to the smallest node whose key is greater than the 
+     * given value. Does NOT modify the tree. */
     template <typename Compare>
     static node* upper_bound_no_splay (node* s, const value_type& value, const Compare& comp) {
         s = search_no_splay(s, value, comp);
@@ -234,6 +316,8 @@ public:
         return s;
     }
 
+    /* Same as upper_bound_no_splay, except the return value is also the new
+     * root of the tree. DOES modify the tree. */
     template <typename Compare>
     static node* upper_bound (node* s, const value_type& value, const Compare& comp) {
         s = upper_bound_no_splay(s, value, comp);
@@ -245,6 +329,7 @@ public:
         return s;
     }
 
+    /* Dump out an adjacency list of the tree. */
     void dump_structure () {
         std::cout << m_value << " | ";
         if (left()) {
@@ -359,11 +444,12 @@ private:
         }
     }
 
-    /* Returning references to pointers. Yup. */
+    /* Access this node's left child. */
     node*& left () {
         return get<LEFT>();
     }
 
+    /* Access this node's right child. */
     node*& right () {
         return get<RIGHT>();
     }
@@ -377,13 +463,21 @@ private:
     
     node* m_parent = nullptr;
 
-    /* m_children's pointers will be default-constructed to nullptr. */
-    std::pair<node*,node*> m_children;
+    /* m_children's pointers will be default-constructed to nullptr by
+     * std::pair's constructor. */
+    std::pair<node*, node*> m_children;
 };
 
+//////////////////////////////////////////////////////////////////////////////
+
+/* iterator and const_iterator both use a shared implementation template,
+ * iterator_tpl. */
 template <typename T, typename Base>
 struct iterator_tpl;
 
+/* TODO my splaytree iterators only support forward iteration. Bidirectional
+ * iteration is possible, but would require some refactoring of node to
+ * accomplish. */
 template <typename T>
 using iterator = iterator_tpl<T, std::iterator<std::forward_iterator_tag, T>>;
 
@@ -400,9 +494,10 @@ struct iterator_tpl : Base {
     using reference = typename base_type::reference;
     using pointer = typename base_type::pointer;
 
-    explicit iterator_tpl (node_type* node = nullptr)
-            : m_node(node) { }
+    explicit iterator_tpl (node_type* node = nullptr) : m_node(node) { }
 
+    /* We need to be able to implicitly convert an iterator into a
+     * const_iterator. */
     iterator_tpl (const iterator<T>& other) : m_node(other.m_node) { }
 
     bool operator== (const iterator_tpl& other) const {
@@ -413,13 +508,8 @@ struct iterator_tpl : Base {
         return m_node != other.m_node;
     }
 
-    reference operator* () {
-        return m_node->value();
-    }
-
-    pointer operator-> () {
-        return &m_node->value();
-    }
+    reference operator* () { return m_node->value(); }
+    pointer operator-> () { return &m_node->value(); }
 
     iterator_tpl& operator++ () {
         m_node = node_type::increment(m_node);
@@ -433,9 +523,10 @@ struct iterator_tpl : Base {
         return ret;
     }
 
-    /* FIXME I wish this were encapsulated. friend the splaytree class? */
     node_type* m_node;
 };
+
+//////////////////////////////////////////////////////////////////////////////
 
 template <typename T, typename Compare = std::less<T>>
 struct set_base {
