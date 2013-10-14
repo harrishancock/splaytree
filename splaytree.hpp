@@ -544,6 +544,9 @@ struct iterator_tpl : Base {
 
 //////////////////////////////////////////////////////////////////////////////
 
+struct unique_insert_tag { };
+struct equivalent_insert_tag { };
+
 /* Base class for using a splaytree as a set. */
 template <typename T, typename Compare>
 struct set_base {
@@ -576,6 +579,8 @@ struct set_base {
         using const_iterator = detail::const_iterator<value_type>;
 
     protected:
+        using insert_tag = unique_insert_tag;
+
         /* In a set, the key and the value are one and the same, so making a
          * default value from a key is as simple as returning the key. */
         static value_type make_value (const key_type& key) { return key; }
@@ -678,6 +683,8 @@ struct map_base {
         }
 
     protected:
+        using insert_tag = unique_key_insert_tag;
+
         static value_type make_value (const key_type& key) {
             return std::make_pair(key, mapped_type());
         }
@@ -834,45 +841,28 @@ public:
     value_compare value_comp () const { return m_comp; }
 
     template <typename... Args>
-    std::pair<iterator, bool> emplace (Args&&... args) {
-        /* TODO I'll have to study how other people implement emplace() for
-         * their data structures--this feels flawed. */
-        auto newroot = new node_type (std::forward<Args>(args)...);
-        if (end() == find_value(newroot->value())) {
-            return insert_aux(newroot);
-        }
-        delete newroot;
-        newroot = nullptr;
-        return std::make_pair(iterator(m_root), false);
+    auto emplace (Args&&... args)
+    -> decltype(emplace(std::forward_as_tuple(args...), insert_tag())) {
+        return emplace(std::forward_as_tuple(args...), insert_tag());
     }
 
     /* All hints are ignored. */
+    /* FIXME tag dispatch this as well, because of .first */
     template <typename... Args>
     iterator emplace_hint (const_iterator, Args&&... args) {
         return emplace(std::forward<Args>(args)...).first;
     }
 
-    /* The assignment as written mentions that "Probably neither [FIND nor
-     * INSERT] should call each other". However, it seems perfectly reasonable
-     * to me that insert() should call find() (or in this case, find_value()).
-     * In the case of splay trees, no efficiency is lost, because find()
-     * prepares the tree for insertion by splaying the insertion point to the
-     * root. */
-    std::pair<iterator, bool> insert (const value_type& value) {
-        if (end() == find_value(value)) {
-            auto newroot = new node_type(value);
-            return insert_aux(newroot);
-        }
-        return std::make_pair(iterator(m_root), false);
+    auto insert (const value_type& value)
+    -> decltype(insert(value, insert_tag())) {
+        return insert(value, insert_tag());
     }
 
-    std::pair<iterator, bool> insert (value_type&& value) {
-        if (end() == find_value(value)) {
-            auto newroot = new node_type(std::forward<value_type>(value));
-            return insert_aux(newroot);
-        }
-        return std::make_pair(iterator(m_root), false);
+    auto insert (value_type&& value)
+    -> decltype(insert(std::forward<value_type>(value), insert_tag())) {
+        return insert(std::forward<value_type>(value), insert_tag());
     }
+
 
     /* All hints are ignored. */
     iterator insert (const_iterator, const value_type& value) {
@@ -1005,6 +995,49 @@ public:
     }
 
 private:
+    using insert_tag = typename base_type::insert_tag;
+
+    /* FIXME forward as tuple properly? */
+#if 0
+    template <typename... Args>
+    std::pair<iterator, bool>
+    emplace (std::tuple<Args...>&& args, unique_insert_tag) {
+        /* TODO I'll have to study how other people implement emplace() for
+         * their data structures--this feels flawed. */
+        auto newroot = new node_type (std::forward<Args>(args)...);
+        if (end() == find_value(newroot->value())) {
+            return insert_aux(newroot);
+        }
+        delete newroot;
+        newroot = nullptr;
+        return std::make_pair(iterator(m_root), false);
+    }
+#endif
+
+    /* The assignment as written mentions that "Probably neither [FIND nor
+     * INSERT] should call each other". However, it seems perfectly reasonable
+     * to me that insert() should call find() (or in this case, find_value()).
+     * In the case of splay trees, no efficiency is lost, because find()
+     * prepares the tree for insertion by splaying the insertion point to the
+     * root. */
+    std::pair<iterator, bool>
+    insert (const value_type& value, unique_insert_tag) {
+        if (end() == find_value(value)) {
+            auto newroot = new node_type(value);
+            return insert_aux(newroot);
+        }
+        return std::make_pair(iterator(m_root), false);
+    }
+
+    std::pair<iterator, bool>
+    insert (value_type&& value, unique_insert_tag) {
+        if (end() == find_value(value)) {
+            auto newroot = new node_type(std::forward<value_type>(value));
+            return insert_aux(newroot);
+        }
+        return std::make_pair(iterator(m_root), false);
+    }
+
     /* Auxiliary function called by insert() to reduce code duplication.
      * Preconditions: newroot is the newly created element to be inserted, and
      * the tree has been arranged such that the correct place for the new root
