@@ -545,7 +545,7 @@ struct iterator_tpl : Base {
 //////////////////////////////////////////////////////////////////////////////
 
 /* Base class for using a splaytree as a set. */
-template <typename T, typename Compare>
+template <typename T, typename Compare, typename InsTag>
 struct set_base {
     /* Derived is not actually used for set's base class, and is only provided
      * for symmetry with map_base. */
@@ -555,6 +555,8 @@ struct set_base {
         using key_compare = Compare;
         using value_type = key_type;
         using value_compare = key_compare;
+
+        using insert_behavior_tag = InsTag;
 
         /* const_iterator is the only iterator implemented, because a splaytree
          * is a model of a set: the key and the value are the same, and
@@ -587,7 +589,7 @@ struct set_base {
 };
 
 /* Base class for using a splaytree as a map. */
-template <typename Key, typename T, typename Compare>
+template <typename Key, typename T, typename Compare, typename InsTag>
 struct map_base {
     template <typename Derived>
     struct base {
@@ -595,6 +597,8 @@ struct map_base {
         using key_compare = Compare;
         using mapped_type = T;
         using value_type = std::pair<typename std::add_const<Key>::type, T>;
+
+        using insert_behavior_tag = InsTag;
 
         /* Class to create function objects which can compare the keys
          * embedded inside of two objects of type value_type. */
@@ -688,6 +692,11 @@ struct map_base {
     };
 };
 
+//////////////////////////////////////////////////////////////////////////////
+
+struct insert_unique_tag { };
+struct insert_equivalent_tag { };
+
 } // namespace detail
 
 //////////////////////////////////////////////////////////////////////////////
@@ -715,6 +724,8 @@ public:
 
     using difference_type = ptrdiff_t;
     using size_type = size_t;
+
+    using insert_behavior_tag = typename base_type::insert_behavior_tag;
 
     /* Default constructor */
     explicit splaytree (const key_compare& comp = key_compare())
@@ -835,15 +846,7 @@ public:
 
     template <typename... Args>
     std::pair<iterator, bool> emplace (Args&&... args) {
-        /* TODO I'll have to study how other people implement emplace() for
-         * their data structures--this feels flawed. */
-        auto newroot = new node_type (std::forward<Args>(args)...);
-        if (end() == find_value(newroot->value())) {
-            return insert_aux(newroot);
-        }
-        delete newroot;
-        newroot = nullptr;
-        return std::make_pair(iterator(m_root), false);
+        return emplace(insert_behavior_tag(), std::forward<Args>(args)...);
     }
 
     /* All hints are ignored. */
@@ -852,26 +855,12 @@ public:
         return emplace(std::forward<Args>(args)...).first;
     }
 
-    /* The assignment as written mentions that "Probably neither [FIND nor
-     * INSERT] should call each other". However, it seems perfectly reasonable
-     * to me that insert() should call find() (or in this case, find_value()).
-     * In the case of splay trees, no efficiency is lost, because find()
-     * prepares the tree for insertion by splaying the insertion point to the
-     * root. */
     std::pair<iterator, bool> insert (const value_type& value) {
-        if (end() == find_value(value)) {
-            auto newroot = new node_type(value);
-            return insert_aux(newroot);
-        }
-        return std::make_pair(iterator(m_root), false);
+        return insert(value, insert_behavior_tag());
     }
 
     std::pair<iterator, bool> insert (value_type&& value) {
-        if (end() == find_value(value)) {
-            auto newroot = new node_type(std::forward<value_type>(value));
-            return insert_aux(newroot);
-        }
-        return std::make_pair(iterator(m_root), false);
+        return insert(value, insert_behavior_tag());
     }
 
     /* All hints are ignored. */
@@ -1047,6 +1036,35 @@ private:
         return iterator(m_root);
     }
 
+    template <typename... Args>
+    std::pair<iterator, bool> emplace (typename detail::insert_unique_tag, Args&&... args) {
+        /* TODO I'll have to study how other people implement emplace() for
+         * their data structures--this feels flawed. */
+        auto newroot = new node_type (std::forward<Args>(args)...);
+        if (end() == find_value(newroot->value())) {
+            return insert_aux(newroot);
+        }
+        delete newroot;
+        newroot = nullptr;
+        return std::make_pair(iterator(m_root), false);
+    }
+
+    std::pair<iterator, bool> insert (const value_type& value, typename detail::insert_unique_tag) {
+        if (end() == find_value(value)) {
+            auto newroot = new node_type(value);
+            return insert_aux(newroot);
+        }
+        return std::make_pair(iterator(m_root), false);
+    }
+
+    std::pair<iterator, bool> insert (value_type&& value, typename detail::insert_unique_tag) {
+        if (end() == find_value(value)) {
+            auto newroot = new node_type(std::forward<value_type>(value));
+            return insert_aux(newroot);
+        }
+        return std::make_pair(iterator(m_root), false);
+    }
+
     value_compare m_comp;
     size_type m_size;
     node_type* m_root;
@@ -1056,11 +1074,11 @@ private:
 
 /* A set container that uses a splaytree implementation. */
 template <typename T, typename Compare = std::less<T>>
-using set = splaytree<detail::set_base<T, Compare>>;
+using set = splaytree<detail::set_base<T, Compare, detail::insert_unique_tag>>;
 
 /* A map container that uses a splaytree implementation. */
 template <typename Key, typename T, typename Compare = std::less<Key>>
-using map = splaytree<detail::map_base<Key, T, Compare>>;
+using map = splaytree<detail::map_base<Key, T, Compare, detail::insert_unique_tag>>;
 
 } // namespace splaytree
 
